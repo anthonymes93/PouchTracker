@@ -1,3 +1,4 @@
+import { plannerWeeks, targetOn } from './spacingSchedule'
 import type { Entry, SpacingSchedule } from '../types/data'
 import { dateKey } from './dateTime'
 
@@ -11,8 +12,8 @@ export function durationParts(seconds: number) {
 export const formatDuration = (seconds: number) => durationParts(seconds).join(':')
 export function spacingGoal(schedule: SpacingSchedule, now: number) {
   const today = dateKey(now, schedule.timeZone)
-  const ordered = [...schedule.steps].sort((a, b) => a.startsOn.localeCompare(b.startsOn))
-  return { current: ordered.filter(step => step.startsOn <= today).at(-1) ?? null, next: ordered.find(step => step.startsOn > today) ?? null }
+  const ordered = plannerWeeks(schedule, today)
+  return { current: targetOn({ ...schedule, steps: ordered }, today), next: ordered.find(step => step.startsOn > today) ?? null }
 }
 export function spacingProgress(elapsed: number | null, minutes: number | undefined) {
   if (elapsed === null || !minutes) return null

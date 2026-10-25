@@ -41,7 +41,27 @@ service cloud.firestore {
         allow write: if owner(uid) && !(section in ['settings', 'baselines', 'coverage', 'rewards', 'achievements']);
       }
       match /settings/{setting} {
-        allow write: if owner(uid) && !(setting in ['pricing', 'baselineState', 'sleep', 'rewardState']);
+        allow write: if owner(uid) && !(setting in ['pricing', 'baselineState', 'sleep', 'rewardState', 'schedule']);
+      }
+      match /settings/schedule {
+        function nextRevision() { return !exists(/databases/$(database)/documents/users/$(uid)/settings/schedule) || !('revision' in resource.data) ? 1 : resource.data.revision + 1; }
+        allow create, update: if owner(uid)
+          && request.resource.data.keys().hasOnly(['schemaVersion', 'revision', 'timeZone', 'steps'])
+          && request.resource.data.schemaVersion == 2 && request.resource.data.timeZone == 'America/Toronto'
+          && request.resource.data.revision is int && request.resource.data.revision == nextRevision()
+          && request.resource.data.steps is list && request.resource.data.steps.size() > 0 && request.resource.data.steps.size() <= 5200
+          && getAfter(/databases/$(database)/documents/users/$(uid)/settings/schedule/history/$(string(request.resource.data.revision))).data.after == request.resource.data
+          && getAfter(/databases/$(database)/documents/users/$(uid)/settings/rewardState).data.sourceRevision == (exists(/databases/$(database)/documents/users/$(uid)/settings/rewardState) ? get(/databases/$(database)/documents/users/$(uid)/settings/rewardState).data.sourceRevision + 1 : 1);
+        allow delete: if false;
+        match /history/{version} {
+          allow create: if owner(uid)
+            && request.resource.data.keys().hasOnly(['revision', 'before', 'after', 'reason', 'at'])
+            && request.resource.data.revision is int && string(request.resource.data.revision) == version
+            && request.resource.data.at == request.time && request.resource.data.reason is string
+            && request.resource.data.after == getAfter(/databases/$(database)/documents/users/$(uid)/settings/schedule).data
+            && request.resource.data.before == (exists(/databases/$(database)/documents/users/$(uid)/settings/schedule) ? get(/databases/$(database)/documents/users/$(uid)/settings/schedule).data : null);
+          allow update, delete: if false;
+        }
       }
       match /settings/rewardState {
         allow create, update: if owner(uid) && request.resource.data.keys().hasOnly(['sourceRevision', 'processedRevision', 'evaluatedRevision', 'evaluatedAt'])

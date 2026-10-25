@@ -4,8 +4,9 @@ import type { User } from 'firebase/auth'
 import { db } from '../lib/firebase'
 import type { Preferences, ProductPrice, Progress, SpacingSchedule, UsageEntry, UserProfile, WeeklySpacingGoal } from '../types/data'
 import type { StoredAward } from '../types/rewards'
-import { DEFAULT_PREFERENCES, DEFAULT_SCHEDULE } from '../config/defaults'
-import { touchRewards } from './rewardRevision'
+import { DEFAULT_PREFERENCES } from '../config/defaults'
+import { migrationFor } from '../utils/spacingSchedule'
+import { writeSchedule } from './schedule'
 
 // These typed references are the shared contract for future features. Security is enforced by firestore.rules.
 export function userData(uid: string) {
@@ -40,6 +41,8 @@ export async function ensureUserProfile(user: User) {
       })
     }
     if (!existingPreferences.exists()) transaction.set(preferences, DEFAULT_PREFERENCES)
-    if (!existingSchedule.exists()) { transaction.set(schedule, DEFAULT_SCHEDULE); touchRewards(transaction, user.uid) }
+    const before = existingSchedule.exists() ? existingSchedule.data() : null
+    const after = migrationFor(before)
+    if (after) writeSchedule(transaction, user.uid, before, after, 'Initialize or safely migrate the weekly schedule to v2.')
   })
 }

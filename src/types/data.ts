@@ -12,7 +12,7 @@ export interface Entry extends UsageEntry { pending: boolean }
 export type Theme = 'forest' | 'ocean'
 export interface Preferences { theme: Theme; currency: 'CAD'; timeZone: string; lastCigarPriceCents: number | null }
 export interface SpacingStep { week: number; startsOn: string; minimumMinutes: number }
-export interface SpacingSchedule { timeZone: string; steps: SpacingStep[] }
+export interface SpacingSchedule { timeZone: string; steps: SpacingStep[]; schemaVersion?: 2; revision?: number }
 export interface ProductPrice { name: string; kind: ProductKind; packPrice: number; unitsPerPack: number; currency: string }
 export interface WeeklySpacingGoal { weekStartsOn: string; minimumMinutes: number }
 export interface Progress { xp: number; level: number }

@@ -1,3 +1,5 @@
+import { applyGoalChanges, migrationFor, scheduleFingerprint } from '../../src/utils/spacingSchedule'
+import type { GoalChange } from '../../src/utils/spacingSchedule'
 // Browser-only test service. Imported by Playwright network interception, never by application code.
 import { Timestamp } from 'firebase/firestore'
 import { DEFAULT_PREFERENCES, DEFAULT_SCHEDULE } from '../../src/config/defaults'
@@ -44,7 +46,7 @@ function invalidate(times: number[]) {
 export function editEntryTime(_uid: string, id: string, time: number, price?: PriceSnapshot | null) { invalidate([time, ...read().filter(value => value.id === id).map(value => value.time)]); store(read().map(value => value.id === id ? { ...value, time, ...(price === undefined ? {} : { priceSnapshot: price, costCents: null }) } : value)); return Promise.resolve() }
 export function deleteEntry(_uid: string, id: string) { invalidate(read().filter(value => value.id === id).map(value => value.time)); store(read().filter(value => value.id !== id)); return Promise.resolve() }
 export function listenPreferences(_uid: string, next: (value: Preferences | null, cached: boolean) => void, fail: (error: Error) => void) { return listen(() => next({ ...DEFAULT_PREFERENCES, ...JSON.parse(localStorage.getItem('fixture-preferences') || '{}') }, false), fail) }
-export function listenSchedule(_uid: string, next: (value: SpacingSchedule | null) => void, fail: (error: Error) => void) { return listen(() => next(DEFAULT_SCHEDULE), fail) }
+export function listenSchedule(_uid: string, next: (value: SpacingSchedule | null) => void, fail: (error: Error) => void) { return listen(() => next(fixtureSchedule()), fail) }
 export function savePreferences(_uid: string, values: Partial<Preferences>) {
   localStorage.setItem('fixture-preferences', JSON.stringify({ ...DEFAULT_PREFERENCES, ...JSON.parse(localStorage.getItem('fixture-preferences') || '{}'), ...values })); emit(); return Promise.resolve()
 }
@@ -70,7 +72,7 @@ export function listenSleep(_uid: string, next: (value: SleepWindow) => void, fa
 export function saveSleep(_uid: string, value: SleepWindow) { localStorage.setItem('fixture-sleep', JSON.stringify(value)); emit(); return Promise.resolve() }
 export const EMPTY_REWARDS: RewardFeed = { awards: [], achievements: [], revision: 0, processedRevision: -1, loading: true, fromCache: false, pending: false }
 function rewardRevision() {
-  const fingerprint = ['fixture-entries', 'fixture-coverage', 'fixture-baselines', 'fixture-sleep'].map(key => localStorage.getItem(key)).join('|')
+  const fingerprint = ['fixture-entries', 'fixture-coverage', 'fixture-baselines', 'fixture-sleep', 'fixture-schedule'].map(key => localStorage.getItem(key)).join('|')
   let revision = Number(localStorage.getItem('fixture-reward-revision') || '0')
   if (localStorage.getItem('fixture-reward-source') !== fingerprint) { revision++; localStorage.setItem('fixture-reward-revision', String(revision)); localStorage.setItem('fixture-reward-source', fingerprint) }
   return revision
@@ -80,7 +82,7 @@ export function listenRewards(_uid: string, next: (value: RewardFeed) => void, f
 }
 export async function reconcileRewards(_uid: string, now: number, _feed: RewardFeed) {
   const revision = rewardRevision()
-  const model = buildRewardModel({ entries: snapshot(read()).entries, coverage: JSON.parse(localStorage.getItem('fixture-coverage') || '[]'), baselines: JSON.parse(localStorage.getItem('fixture-baselines') || '[]'), schedule: DEFAULT_SCHEDULE, sleep: JSON.parse(localStorage.getItem('fixture-sleep') || JSON.stringify(DEFAULT_SLEEP)) }, now)
+  const model = buildRewardModel({ entries: snapshot(read()).entries, coverage: JSON.parse(localStorage.getItem('fixture-coverage') || '[]'), baselines: JSON.parse(localStorage.getItem('fixture-baselines') || '[]'), schedule: fixtureSchedule(), sleep: JSON.parse(localStorage.getItem('fixture-sleep') || JSON.stringify(DEFAULT_SLEEP)) }, now)
   const result = evaluateRewards(model, now)
   for (const [key, desired] of [['fixture-rewards', result.awards], ['fixture-achievements', result.achievements]] as const) {
     const previous: StoredAward[] = JSON.parse(localStorage.getItem(key) || '[]')
@@ -93,3 +95,19 @@ export async function reconcileRewards(_uid: string, now: number, _feed: RewardF
   localStorage.setItem('fixture-reward-processed', String(revision)); emit()
 }
 export function clearRewardCache(_uid: string) {}
+export function writeSchedule() { throw new Error('Profile initialization must not run in isolated UI tests.') }
+
+function fixtureSchedule(): SpacingSchedule {
+ const saved = JSON.parse(localStorage.getItem('fixture-schedule') || 'null')
+ const migrated = migrationFor(saved)
+ if (migrated) localStorage.setItem('fixture-schedule', JSON.stringify(migrated))
+ return migrated ?? saved ?? DEFAULT_SCHEDULE
+}
+export async function saveGoalChanges(_uid: string, expected: SpacingSchedule, changes: GoalChange[]) {
+ if (!navigator.onLine) throw new Error('You are offline. Reconnect before saving goals; your draft has not been saved.')
+ if (localStorage.getItem('fixture-write-error')) throw new Error('Could not save goals.')
+ const before = fixtureSchedule()
+ if (scheduleFingerprint(before) !== scheduleFingerprint(expected)) throw new Error('Goals changed on another device. Cancel this draft and review the latest saved goals before trying again.')
+ const after = applyGoalChanges(before, changes)
+ localStorage.setItem('fixture-schedule', JSON.stringify(after)); emit()
+}

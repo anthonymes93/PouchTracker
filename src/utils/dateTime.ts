@@ -1,4 +1,4 @@
-import { TIME_ZONE } from '../config/defaults'
+import { TIME_ZONE } from '../config/timeZone'
 
 const formatters = new Map<string, Intl.DateTimeFormat>()
 function formatter(timeZone: string) {

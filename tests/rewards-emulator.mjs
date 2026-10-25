@@ -30,7 +30,9 @@ export async function rewardEmulatorChecks(client, check, denied) {
   }
   await check('reward source fixture uses emulator-only documents', async () => {
     const batch = writeBatch(a)
-    batch.set(ref(a, 'settings/schedule'), { timeZone: 'America/Toronto', steps: [{ week: 1, startsOn: '2026-10-23', minimumMinutes: 60 }] })
+    const schedule = { schemaVersion: 2, revision: 1, timeZone: 'America/Toronto', steps: [{ week: 1, startsOn: '2026-10-18', minimumMinutes: 60 }] }
+    batch.set(ref(a, 'settings/schedule'), schedule)
+    batch.set(ref(a, 'settings/schedule/history/1'), { revision: 1, before: null, after: schedule, at: serverTimestamp(), reason: 'Test initialization' })
     batch.set(ref(a, 'settings/sleep'), { start: '23:00', end: '09:00' })
     batch.set(ref(a, 'entries/anchor'), entry)
     batch.set(ref(a, 'coverage/2026-10-23'), { date: '2026-10-23', complete: true, updatedAt: serverTimestamp() })

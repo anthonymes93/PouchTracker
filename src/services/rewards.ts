@@ -1,3 +1,4 @@
+import { validateSchedule } from '../utils/spacingSchedule'
 import { collection, doc, getDocFromServer, getDocsFromServer, onSnapshot, runTransaction, Timestamp } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { rewardRevisionRef } from './rewardRevision'
@@ -34,6 +35,7 @@ async function loadModel(uid: string, now: number) {
   const after = await getDocFromServer(rewardRevisionRef(uid))
   if ((after.data()?.sourceRevision ?? 0) !== revision) throw new Error('Records changed during reward review. Retrying with current records.')
   const source: RewardSource = { entries: entries.docs.map(value => ({ ...value.data(), id: value.id, pending: false } as Entry)), coverage: coverage.docs.map(value => value.data() as Coverage), baselines: baselines.docs.map(value => ({ ...value.data(), id: value.id } as Baseline)), schedule: schedule.exists() ? schedule.data() as SpacingSchedule : null, sleep: sleep.exists() ? sleep.data() as RewardSource['sleep'] : DEFAULT_SLEEP }
+  if (source.schedule) validateSchedule(source.schedule)
   if (!validSleep(source.sleep) || !source.schedule?.steps?.length || source.schedule.steps.some(step => !Number.isFinite(step.minimumMinutes) || step.minimumMinutes <= 0)) throw new Error('Valid sleep and spacing settings are required to reconcile rewards.')
   const result = { revision, day: dateKey(now), model: buildRewardModel(source, now) }
   models.set(uid, result); return result

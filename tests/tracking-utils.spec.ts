@@ -5,7 +5,7 @@ import { dailyCounts, durationParts, elapsedSeconds, spacingGoal, spacingProgres
 import { dateKey, dayBounds, fromDateTimeInput, toDateTimeInput } from '../src/utils/dateTime'
 import type { Entry } from '../src/types/data'
 
-for (const [date, week, minutes] of [['2026-10-23', 1, 60], ['2026-10-30', 2, 90], ['2026-11-06', 3, 120], ['2026-11-13', 4, 180]] as const) {
+for (const [date, week, minutes] of [['2026-10-18', 1, 60], ['2026-10-25', 2, 90], ['2026-11-01', 3, 120], ['2026-11-08', 4, 180]] as const) {
   test(`schedule changes at Toronto midnight on ${date}`, () => {
     const boundary = fromDateTimeInput(`${date}T00:00:00`)
     expect(spacingGoal(DEFAULT_SCHEDULE, boundary).current).toMatchObject({ week, minimumMinutes: minutes })
@@ -13,10 +13,10 @@ for (const [date, week, minutes] of [['2026-10-23', 1, 60], ['2026-10-30', 2, 90
   })
 }
 test('schedule before start, UTC disagreement, DST and indefinite final week', () => {
-  expect(spacingGoal(DEFAULT_SCHEDULE, Date.parse('2026-10-23T02:00:00Z')).current).toBeNull()
-  expect(spacingGoal(DEFAULT_SCHEDULE, Date.parse('2026-10-30T03:59:59Z')).current?.week).toBe(1)
-  expect(spacingGoal(DEFAULT_SCHEDULE, Date.parse('2026-11-06T04:59:59Z')).current?.week).toBe(2)
-  expect(spacingGoal(DEFAULT_SCHEDULE, Date.parse('2030-01-01T12:00:00Z'))).toMatchObject({ current: { week: 4, minimumMinutes: 180 }, next: null })
+  expect(spacingGoal(DEFAULT_SCHEDULE, Date.parse('2026-10-18T02:00:00Z')).current).toBeNull()
+  expect(spacingGoal(DEFAULT_SCHEDULE, Date.parse('2026-10-25T03:59:59Z')).current?.week).toBe(1)
+  expect(spacingGoal(DEFAULT_SCHEDULE, Date.parse('2026-11-01T03:59:59Z')).current?.week).toBe(2)
+  expect(spacingGoal(DEFAULT_SCHEDULE, Date.parse('2030-01-01T12:00:00Z'))).toMatchObject({ current: { minimumMinutes: 180 } })
 })
 test('timer is timestamp-derived across refresh, nonnegative, and counts beyond a target', () => {
   const last = Date.parse('2026-10-24T14:00:00Z')

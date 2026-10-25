@@ -23,7 +23,7 @@ for (const [minutes, xp] of [[60, 10], [75, 25], [90, 50], [120, 100], [180, 200
 test('existing week 1–4 targets and interval-start goal are preserved', () => {
   const data = source()
   expect(['2026-10-23', '2026-10-30', '2026-11-06', '2026-11-13', '2027-01-01'].map(day => goalAt(data, time(`${day}T12:00`)))).toEqual([60, 90, 120, 180, 180])
-  const result = derive(source([entry('start', '2026-10-29T22:00')]), time('2026-10-30T10:00'))
+  const result = derive(source([entry('start', '2026-10-24T22:00')]), time('2026-10-25T10:00'))
   expect(result.active?.target).toBe(60); expect(result.awards.at(-1)?.milestone).toBe('double')
 })
 test('sleep exclusion, overnight coverage and real DST awake durations', () => {
@@ -87,7 +87,7 @@ test('spacing achievements unlock without a new pouch and calendar attribution u
   const result = derive(source(undefined, ['2026-10-23']))
   expect(result.achievements.filter(value => ['first-step', 'extra-mile', 'overachiever', 'double-time', 'triple-time'].includes(value.id))).toHaveLength(5)
   expect(result.awards.map(value => value.date)).toEqual(Array(5).fill('2026-10-23'))
-  const overnight = derive(source([entry('late', '2026-10-23T22:30')], ['2026-10-23', '2026-10-24']), time('2026-10-25T10:00'))
+  const overnight = derive(source([entry('late', '2026-10-23T22:30')], ['2026-10-23', '2026-10-24']), time('2026-10-30T10:00'))
   expect(overnight.awards.find(value => value.id === 'spacing_late_target')?.date).toBe('2026-10-24')
   expect(rewardTotals(overnight.awards, '2026-10-23', '2026-10-24').xp).toBe(200)
   const award = result.awards[0]; expect(awardEqual(award, { ...award, evidence: Object.fromEntries(Object.entries(award.evidence).reverse()) as typeof award.evidence })).toBe(true)

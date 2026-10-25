@@ -44,7 +44,7 @@ export function RewardsProvider({ children }: { children: ReactNode }) {
   }, [feed.awards, feed.achievements, result])
   const stale = feed.processedRevision !== feed.revision || needsReview || finance.pending
   useEffect(() => {
-    if (error || !['/', '/rewards'].includes(path) || !result || feed.loading || feed.fromCache || finance.fromCache || finance.pending || (!stale && !needsReview)) return
+    if (error || !['/', '/rewards', '/settings/goals'].includes(path) || !result || feed.loading || feed.fromCache || finance.fromCache || finance.pending || (!stale && !needsReview)) return
     const timer = setTimeout(() => {
       if (inFlight.current || !navigator.onLine) return
       inFlight.current = true; setSyncing(true); setError(null)

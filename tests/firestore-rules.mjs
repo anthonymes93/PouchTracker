@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { rewardEmulatorChecks } from './rewards-emulator.mjs'
+import { scheduleEmulatorChecks } from './schedule-emulator.mjs'
 import { initializeApp, deleteApp } from 'firebase/app'
 import { connectFirestoreEmulator, doc, getDoc, getDocs, collection, getFirestore, setDoc, updateDoc, deleteDoc, serverTimestamp, writeBatch, terminate, query, where, orderBy, limit, Timestamp, runTransaction } from 'firebase/firestore'
 
@@ -24,6 +25,7 @@ async function baseline(date, categories = { pouch: { dailyCountMilli: 12000, pr
   await batch.commit()
 }
 try {
+  await scheduleEmulatorChecks(client, check, denied)
   await check('owner can save valid pricing', () => setDoc(ref(alice, 'settings/pricing'), price))
   await check('individual cigar presets are accepted', () => setDoc(ref(alice, 'settings/pricing'), { ...price, cigarPresetsCents: [190, 275, 350] }))
   await check('cigar presets require three prices', () => denied(() => setDoc(ref(alice, 'settings/pricing'), { ...price, cigarPresetsCents: [190, 230] })))

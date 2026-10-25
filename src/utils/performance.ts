@@ -1,3 +1,4 @@
+import { targetOn } from './spacingSchedule'
 import type { Entry, SpacingSchedule } from '../types/data'
 import type { Baseline, Coverage } from '../types/finance'
 import { baselineForDay, dailyReport, spending } from './finance'
@@ -52,13 +53,12 @@ export function scoreDay(success: number, ratio: number, reduction: number | nul
 export function performanceDays(entries: Entry[], baselines: Baseline[], coverage: Coverage[], schedule: SpacingSchedule | null, sleep: SleepWindow, start: string, end: string, today: string) {
   const grouped = new Map<string, Entry[]>()
   for (const entry of entries) { const key = dateKey(entry.occurredAt.toMillis()); const group = grouped.get(key) ?? []; group.push(entry); grouped.set(key, group) }
-  const orderedSteps = [...(schedule?.steps ?? [])].sort((a, b) => a.startsOn.localeCompare(b.startsOn))
   return dailyReport(entries, baselines, coverage, start, end, today).map(finance => {
     const date = finance.date
     const timeline = (grouped.get(date) ?? []).sort((a, b) => a.occurredAt.toMillis() - b.occurredAt.toMillis())
     const counts = { pouch: 0, cigarette: 0, cigar: 0, total: timeline.length }
     timeline.forEach(entry => counts[entry.kind]++)
-    const target = orderedSteps.filter(step => step.startsOn <= date).at(-1)?.minimumMinutes ?? null
+    const target = targetOn(schedule, date)?.minimumMinutes ?? null
     const pouches = timeline.filter(entry => entry.kind === 'pouch')
     const intervals: number[] = []
     for (let i = 1; i < pouches.length; i++) {

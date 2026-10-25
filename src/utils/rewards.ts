@@ -1,3 +1,5 @@
+import { formatMinutes } from './duration'
+import { targetOn } from './spacingSchedule'
 import { ACHIEVEMENTS, DAILY_SCORE_THRESHOLD, DAILY_XP_CAP, MILESTONES, REDUCTION_DAYS } from '../config/rewards'
 import type { Award, RewardEvidence, RewardSource, StoredAward } from '../types/rewards'
 import { dateKey, fromDateTimeInput } from './dateTime'
@@ -8,7 +10,7 @@ import { awakeProgress, awakeWindows } from './rewardTime'
 
 const emptyEvidence = (date: string, detail: string): RewardEvidence => ({ startDate: date, endDate: date, startEntryId: '', startMs: 0, targetMinutes: 0, awakeMinutes: 0, intervalMinutes: 0, detail })
 const dayEnd = (date: string) => fromDateTimeInput(`${shiftDate(date, 1)}T00:00`) - 1
-export function goalAt(source: RewardSource, ms: number) { return [...(source.schedule?.steps ?? [])].sort((a, b) => a.startsOn.localeCompare(b.startsOn)).filter(step => step.startsOn <= dateKey(ms)).at(-1)?.minimumMinutes ?? null }
+export function goalAt(source: RewardSource, ms: number) { return targetOn(source.schedule, dateKey(ms))?.minimumMinutes ?? null }
 export function buildRewardModel(source: RewardSource, now: number) {
   const today = dateKey(now), confirmed = new Set(source.coverage.filter(day => day.complete && day.date < today).map(day => day.date))
   const pouches = source.entries.filter(entry => entry.kind === 'pouch' && entry.occurredAt.toMillis() <= now).sort((a, b) => a.occurredAt.toMillis() - b.occurredAt.toMillis() || a.id.localeCompare(b.id))
@@ -50,7 +52,7 @@ export function buildRewardModel(source: RewardSource, now: number) {
     consistent = target && minutes >= target ? consistent + 1 : 0
     bestConsistency = Math.max(bestConsistency, consistent)
     if (consistent >= 5) unlock('getting-consistent', end, { ...emptyEvidence(dateKey(end), 'Five consecutive verified eligible daytime intervals met their start targets.'), startEntryId: pouches[i].id, startMs: start, awakeMinutes: minutes, targetMinutes: target ?? 0 })
-    if (priorRecord !== null && minutes > priorRecord) unlock('personal-best', end, { ...emptyEvidence(dateKey(end), `Beat the previous verified ${priorRecord.toFixed(1)} minute record.`), startEntryId: pouches[i].id, startMs: start, awakeMinutes: minutes })
+    if (priorRecord !== null && minutes > priorRecord) unlock('personal-best', end, { ...emptyEvidence(dateKey(end), `Beat the previous verified ${formatMinutes(priorRecord)} record.`), startEntryId: pouches[i].id, startMs: start, awakeMinutes: minutes })
     priorRecord = Math.max(priorRecord ?? 0, minutes)
   }
   progress['getting-consistent'] = `${Math.min(5, bestConsistency)} / 5 verified intervals`
@@ -62,7 +64,7 @@ export function buildRewardModel(source: RewardSource, now: number) {
     const window = awakeWindows(date, source.sleep).find(([a, b]) => start >= a && start < b)
     if (confirmed.has(date) && window && window[1] <= now) {
       const minutes = (window[1] - start) / 60000
-      if (minutes > priorRecord) unlock('personal-best', window[1] - 1, { ...emptyEvidence(date, `A confirmed remaining awake segment exceeded the earlier ${priorRecord.toFixed(1)} minute record, without requiring another pouch.`), startEntryId: latest.id, startMs: start, awakeMinutes: minutes, intervalMinutes: minutes })
+      if (minutes > priorRecord) unlock('personal-best', window[1] - 1, { ...emptyEvidence(date, `A confirmed remaining awake segment exceeded the earlier ${formatMinutes(priorRecord)} record, without requiring another pouch.`), startEntryId: latest.id, startMs: start, awakeMinutes: minutes, intervalMinutes: minutes })
     }
   }
   let good = 0, smoke = 0, pouchFree = 0, bestGood = 0, bestSmoke = 0
@@ -93,7 +95,7 @@ export function buildRewardModel(source: RewardSource, now: number) {
   })
   for (let i = 2; i < weeks.length; i++) {
     const a = weeks[i - 2], b = weeks[i - 1], c = weeks[i]
-    if (a.mean !== null && b.mean !== null && c.mean !== null && a.mean < b.mean && b.mean < c.mean) unlock('steady-progress', dayEnd(shiftDate(c.start, 6)), { ...emptyEvidence(c.start, `Three complete Monday–Sunday weeks improved actual spacing: ${a.mean.toFixed(1)}, ${b.mean.toFixed(1)}, ${c.mean.toFixed(1)} minutes.`), startDate: a.start, endDate: shiftDate(c.start, 6) })
+    if (a.mean !== null && b.mean !== null && c.mean !== null && a.mean < b.mean && b.mean < c.mean) unlock('steady-progress', dayEnd(shiftDate(c.start, 6)), { ...emptyEvidence(c.start, `Three complete Monday–Sunday weeks improved actual spacing: ${formatMinutes(a.mean)}, ${formatMinutes(b.mean)}, ${formatMinutes(c.mean)}.`), startDate: a.start, endDate: shiftDate(c.start, 6) })
   }
   progress['solid-week'] = `${Math.min(7, bestGood)} / 7 confirmed days`
   progress['smoke-free-week'] = `${Math.min(7, bestSmoke)} / 7 confirmed days`
