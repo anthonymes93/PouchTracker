@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/__/auth/:path*", "destination": "https://pouch-tracker-949af.firebaseapp.com/__/auth/:path*" },
+    { "source": "/__/firebase/init.json", "destination": "https://pouch-tracker-949af.firebaseapp.com/__/firebase/init.json" },
+    { "source": "/login", "destination": "/index.html" },
+    { "source": "/calendar", "destination": "/index.html" },
+    { "source": "/history", "destination": "/index.html" },
+    { "source": "/stats", "destination": "/index.html" },
+    { "source": "/rewards", "destination": "/index.html" },
+    { "source": "/settings", "destination": "/index.html" }
+  ],
+  "headers": [
+    { "source": "/__/auth/:path*", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/__/firebase/init.json", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
+  ]
+}
