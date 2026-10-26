@@ -7,41 +7,51 @@ import { PageHeader } from '../components/ui/PageHeader'
 import { Modal } from '../components/ui/Modal'
 import { RewardStatus } from '../components/rewards/RewardCards'
 import { formatMinutes } from '../utils/duration'
-import { applyGoalChanges, bulkGoalChanges, plannerWeeks } from '../utils/spacingSchedule'
-import type { GoalChange } from '../utils/spacingSchedule'
+import { needsPlanReview, orderedSteps, planUpdate } from '../utils/spacingSchedule'
+import type { PlanAction } from '../utils/spacingSchedule'
 import type { SpacingSchedule, SpacingStep } from '../types/data'
 import { shiftDate, torontoToday } from '../utils/financeDates'
-import { saveGoalChanges } from '../services/schedule'
+import { savePlanAction } from '../services/schedule'
 
 function TargetPicker({ value, onChange }: { value: number; onChange: (value: number) => void }) {
   return <><div className="goal-picker"><label className="field-label">Hours<select aria-label="Hours" value={Math.floor(value / 60)} onChange={e => onChange(Number(e.target.value) * 60 + (Number(e.target.value) === 24 ? 0 : value % 60))}>{Array.from({ length: 25 }, (_, i) => <option key={i} value={i}>{i}</option>)}</select></label><label className="field-label">Minutes<select aria-label="Minutes" value={value % 60} disabled={value >= 1440} onChange={e => onChange(Math.floor(value / 60) * 60 + Number(e.target.value))}>{[0, 15, 30, 45].map(i => <option key={i} value={i}>{i}</option>)}</select></label></div><p className="goal-preview">Target: <strong>{formatMinutes(value)}</strong></p></>
 }
-function GoalEditor({ schedule, rows, initial, uid, today, close }: { schedule: SpacingSchedule; rows: SpacingStep[]; initial: SpacingStep | null; uid: string; today: string; close: () => void }) {
-  // Snapshot retained for conflict detection. Live updates never silently replace an open draft.
-  const [base] = useState(schedule), [sourceRows] = useState(rows)
-  const upcoming = sourceRows.filter(row => row.startsOn > today)
-  const [target, setTarget] = useState(initial?.minimumMinutes ?? upcoming[0]?.minimumMinutes ?? 180)
-  const [start, setStart] = useState(upcoming[0]?.startsOn ?? ''), [end, setEnd] = useState(upcoming.at(-1)?.startsOn ?? '')
-  const [mode, setMode] = useState<'set' | 'increase' | 'reset'>('set'), [increase, setIncrease] = useState(15)
-  const [review, setReview] = useState<GoalChange[] | null>(null), [error, setError] = useState(''), [saving, setSaving] = useState(false)
-  const isCurrent = initial && initial.startsOn <= today
+
+type EditorMode = 'add' | 'remove' | 'edit' | 'progression' | 'review'
+function GoalEditor({ base, mode, row, uid, today, close }: { base: SpacingSchedule; mode: EditorMode; row?: SpacingStep; uid: string; today: string; close: () => void }) {
+  const rows = orderedSteps(base)
+  const [target, setTarget] = useState(row?.minimumMinutes ?? 180)
+  const [enabled, setEnabled] = useState(base.progressionEnabled ?? true)
+  const [increment, setIncrement] = useState<15 | 30 | 60>(base.incrementMinutes ?? 30)
+  const [keep, setKeep] = useState(rows.length)
+  const [review, setReview] = useState<{ action: PlanAction; after: SpacingSchedule } | null>(null)
+  const [error, setError] = useState(''), [saving, setSaving] = useState(false)
   function preview() {
     try {
-      const changes = initial ? [{ startsOn: initial.startsOn, minimumMinutes: target }] : bulkGoalChanges(sourceRows, start, end, mode, mode === 'increase' ? increase : target, today)
-      applyGoalChanges(base, changes, today); setReview(changes); setError('')
+      const action: PlanAction = mode === 'edit' ? { kind:'edit', changes:[{startsOn:row!.startsOn,minimumMinutes:target}] } : mode === 'progression' ? { kind:mode, enabled, increment } : mode === 'review' ? { kind:mode, keep, enabled, increment } : { kind:mode }
+      setReview({action, after:planUpdate(base, action, today)}); setError('')
     } catch (err) { setError((err as Error).message) }
   }
   async function save() {
     if (!review || saving) return
     setSaving(true); setError('')
-    try { await saveGoalChanges(uid, base, review); close() } catch (err) { setError((err as Error).message); setSaving(false) }
+    try { await savePlanAction(uid, base, review.action); close() } catch (err) { setError((err as Error).message); setSaving(false) }
   }
-  return <Modal title={initial ? `Edit Week ${initial.week}` : 'Plan future weeks'} onClose={() => { if (!saving) close() }}>
-    {isCurrent && <p className="data-note">Changing the current target applies immediately and may change today’s progress, scores earlier this week, and provisional XP. Saved rewards will be reconciled with an audit record. Your entries stay intact.</p>}
-    {review ? <><h3>Review changes</h3><p className="data-note">{mode === 'reset' && !initial ? 'Confirm reset: all selected future weeks will use the target immediately before the selected range.' : 'Only the weeks listed below will change.'}</p><ul className="goal-review">{review.map(change => <li key={change.startsOn}>Week {sourceRows.find(row => row.startsOn === change.startsOn)?.week} · {change.startsOn}<br />{formatMinutes(sourceRows.find(row => row.startsOn === change.startsOn)?.minimumMinutes)} → <strong>{formatMinutes(change.minimumMinutes)}</strong></li>)}</ul><div className="goal-actions"><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save changes'}</button><button className="secondary-button" disabled={saving} onClick={() => setReview(null)}>Back</button></div></> : <>
-      {!initial && <><div className="goal-picker"><label className="field-label">From week<select aria-label="From week" value={start} onChange={e => setStart(e.target.value)}>{upcoming.map(row => <option key={row.startsOn} value={row.startsOn}>Week {row.week} · {row.startsOn}</option>)}</select></label><label className="field-label">Through week<select aria-label="Through week" value={end} onChange={e => setEnd(e.target.value)}>{upcoming.map(row => <option key={row.startsOn} value={row.startsOn}>Week {row.week} · {row.startsOn}</option>)}</select></label></div><label className="field-label">Change<select aria-label="Change" value={mode} onChange={e => setMode(e.target.value as typeof mode)}><option value="set">Apply one target</option><option value="increase">Increase each selected target</option><option value="reset">Reset to previous target</option></select></label></>}
-      {initial || mode === 'set' ? <TargetPicker value={target} onChange={setTarget} /> : mode === 'increase' ? <label className="field-label">Increase by (minutes)<input type="number" min="15" max="1425" step="15" value={increase} onChange={e => setIncrease(Number(e.target.value))} /></label> : <p className="data-note">Selected weeks will keep the last target before this range. Review and confirm the reset before saving.</p>}
-      {initial && sourceRows.findIndex(row => row.startsOn === initial.startsOn) > 0 && <button className="secondary-button" onClick={() => setTarget(sourceRows[sourceRows.findIndex(row => row.startsOn === initial.startsOn) - 1].minimumMinutes)}>Copy previous week</button>}
+  const title = mode === 'edit' ? `Edit Week ${row!.week}` : mode === 'add' ? 'Add Next Week' : mode === 'remove' ? 'Remove final upcoming week' : mode === 'review' ? 'Review existing plan' : 'Minimum Weekly Increase'
+  const changed = review ? [...new Set([...rows, ...review.after.steps].map(step => step.startsOn))].map(date => ({ before:rows.find(step => step.startsOn === date), after:review.after.steps.find(step => step.startsOn === date) })).filter(pair => !pair.before || !pair.after || pair.before.minimumMinutes !== pair.after.minimumMinutes) : []
+  return <Modal title={title} onClose={() => { if (!saving) close() }}>
+    {mode === 'edit' && row!.startsOn <= today && <p className="data-note">Changing this week can affect today's progress, earlier scores this week, and provisional XP. Rewards will be reconciled with an audit record. Your usage entries stay intact.</p>}
+    {review ? <><h3>Review changes</h3><p className="data-note">{review.after.progressionEnabled ? `Automatic increases: ${formatMinutes(review.after.incrementMinutes)} minimum per week.` : 'Automatic increases paused. Equal or lower targets are allowed.'} No additional weeks are generated by an edit.</p>
+      {mode === 'review' && <p className="data-note">Confirm: retain {review.after.steps.length} existing weeks and remove {rows.length - review.after.steps.length} upcoming weeks. Removed goals stay in audit history; usage records are untouched.</p>}
+      <ul className="goal-review">{changed.map(({before,after}) => <li key={(after ?? before)!.startsOn}>Week {(after ?? before)!.week} &middot; {(after ?? before)!.startsOn}<br />{before ? formatMinutes(before.minimumMinutes) : 'New week'} &rarr; <strong>{after ? formatMinutes(after.minimumMinutes) : 'Remove planned week'}</strong>{after && before && (mode !== 'edit' || after.startsOn !== row?.startsOn || after.minimumMinutes !== target) && <small className="data-note"> &middot; Automatically adjusted</small>}</li>)}</ul>
+      {!changed.length && <p className="data-note">No weekly targets change. Your progression preference will be saved.</p>}
+      <div className="goal-actions"><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button><button className="secondary-button" disabled={saving} onClick={() => setReview(null)}>Back</button></div>
+    </> : <>
+      {mode === 'edit' && <><p>Saved target: {formatMinutes(row!.minimumMinutes)}</p><TargetPicker value={target} onChange={setTarget} /><p className="data-note">{base.progressionEnabled ? 'Later configured weeks will increase only as needed to meet your minimum. Pause automatic increases on the planner to choose a maintenance or lower target.' : 'Automatic increases are paused; later weeks will keep their saved targets.'}</p></>}
+      {mode === 'add' && <p>Add exactly one week after your existing plan. Its starting target uses the previous goal {base.progressionEnabled ? `plus ${formatMinutes(base.incrementMinutes)}` : 'without an increase'}. Review before saving.</p>}
+      {mode === 'remove' && <p>Remove Week {rows.at(-1)!.week}, starting {rows.at(-1)!.startsOn}? The preceding target will continue until another week is added. Tracking entries and audit history are preserved.</p>}
+      {mode === 'review' && <><p>The previous planner may have generated these weeks. We cannot reliably tell which were intentional. Nothing is trimmed until you review and save.</p><label className="field-label">Keep existing weeks<input type="number" min={Math.max(1,rows.filter(step => step.startsOn <= today).length)} max={rows.length} value={keep} onChange={e => setKeep(Number(e.target.value))} /></label><p className="data-note">Keep all to retain your plan, or choose a shorter prefix, such as the initial four weeks. Every removed target appears in the confirmation.</p><details><summary>Inspect existing targets ({rows.length})</summary><ul className="goal-review">{rows.map(step => <li key={step.startsOn}>Week {step.week} &middot; {step.startsOn} &middot; {formatMinutes(step.minimumMinutes)}</li>)}</ul></details></>}
+      {(mode === 'progression' || mode === 'review') && <><label className="field-label">Automatic increases<select aria-label="Automatic increases" value={enabled ? 'enabled' : 'paused'} onChange={e => setEnabled(e.target.value === 'enabled')}><option value="enabled">Enabled</option><option value="paused">Paused - allow maintenance or lower goals</option></select></label><label className="field-label">Minimum Weekly Increase<select aria-label="Minimum Weekly Increase" value={increment} onChange={e => setIncrement(Number(e.target.value) as 15 | 30 | 60)}>{[15,30,60].map(value => <option key={value} value={value}>{formatMinutes(value)}{value === 30 ? ' (default)' : ''}</option>)}</select></label><p className="data-note">Completed weeks and the current goal stay unchanged when you change this preference. Review any increases to upcoming weeks before saving.</p></>}
       <div className="goal-actions"><button className="primary-button" onClick={preview}>Review changes</button></div>
     </>}
     {error && <p role="alert" className="error-banner">{error}</p>}<button className="secondary-button" disabled={saving} onClick={close}>Cancel</button>
@@ -53,17 +63,21 @@ export default function SpacingGoals() {
 }
 function GoalPlanner({ uid }: { uid: string }) {
   const { schedule, scheduleError, scheduleCached, retry } = useTheme(), today = torontoToday(useClock())
-  const [editing, setEditing] = useState<{ row: SpacingStep | null; schedule: SpacingSchedule; rows: SpacingStep[] } | null>(null)
-  const rows = schedule ? plannerWeeks(schedule, today) : []
-  const groups = [...new Set(rows.map(row => row.startsOn.slice(0, 7)))]
-  return <div className="goal-planner"><PageHeader eyebrow="YOUR PACE" title="Pouch Spacing Goals" description="Plan up to 52 weeks from your current week. Keep, increase, or decrease your targets as you choose." /><Link className="text-link" to="/settings">Back to Settings</Link>
-    <p className="data-note">Weeks run Sunday–Saturday in America/Toronto. Past weeks stay available for review. Beyond your plan, the last target continues until you change it.</p>
+  const [editor, setEditor] = useState<{ base:SpacingSchedule; mode:EditorMode; row?:SpacingStep } | null>(null)
+  const rows = schedule ? orderedSteps(schedule) : [], pendingReview = schedule && needsPlanReview(schedule)
+  const open = (mode:EditorMode, row?:SpacingStep) => { if (schedule) setEditor({base:schedule,mode,row}) }
+  return <div className="goal-planner"><PageHeader eyebrow="YOUR PACE" title="Pouch Spacing Goals" description="Build your plan one week at a time. Add only the weeks you want to configure." /><Link className="text-link" to="/settings">Back to Settings</Link>
+    <p className="data-note">Your last configured target continues beyond the plan. No new weeks or increases are created as time passes.</p>
     {scheduleCached && schedule && <p role="status" className="data-note">Showing locally available goals. Connect to confirm the latest version. Saving requires a connection; unsaved drafts are not queued.</p>}
     {scheduleError && <div role="alert" className="error-banner">{scheduleError}<button className="text-button" onClick={retry}>Retry goals</button></div>}
-    {!schedule ? <p role="status">Waiting for your saved schedule…</p> : <><button className="secondary-button" disabled={!!scheduleError} onClick={() => setEditing({ row: null, schedule, rows })}>Plan future weeks</button><div className="goal-months">{groups.map(month => <details key={month} open={rows.some(row => row.startsOn.slice(0, 7) === month && row.startsOn <= today && shiftDate(row.startsOn, 6) >= today)}><summary>{new Intl.DateTimeFormat('en-CA', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${month}-15T12:00:00Z`))}</summary>{rows.filter(row => row.startsOn.startsWith(month)).map(row => {
-      const status = shiftDate(row.startsOn, 6) < today ? 'Completed' : row.startsOn > today ? 'Upcoming' : 'Current'
-      return <div className={`goal-row ${status === 'Current' ? 'current' : ''}`} key={row.startsOn}><div><strong>Week {row.week}</strong><span>{row.startsOn} – {shiftDate(row.startsOn, 6)}</span><small>{status}</small></div><strong>{formatMinutes(row.minimumMinutes)}</strong><button className="secondary-button" aria-label={`Edit Week ${row.week}`} disabled={status === 'Completed' || !!scheduleError} onClick={() => setEditing({ row, schedule, rows })}>{status === 'Completed' ? 'Locked' : 'Edit'}</button></div>
-    })}</details>)}</div></>}
-    <RewardStatus />{editing && <GoalEditor schedule={editing.schedule} rows={editing.rows} initial={editing.row} uid={uid} today={today} close={() => setEditing(null)} />}
+    {!schedule ? <p role="status">Waiting for your saved schedule...</p> : pendingReview ? <section className="panel settings-panel"><h2>Review your existing plan</h2><p className="data-note">Your saved plan contains {rows.length} weeks from the previous planner. Review which to keep before using the progressive builder. Existing targets remain active until you confirm.</p><button className="primary-button" disabled={!!scheduleError} onClick={() => open('review')}>Review existing plan</button></section> : <>
+      <section className="panel settings-panel"><h2>Minimum Weekly Increase</h2><p>{formatMinutes(schedule.incrementMinutes)} &middot; {schedule.progressionEnabled ? 'Automatic increases enabled' : 'Progression paused'}</p><button className="secondary-button" disabled={!!scheduleError} onClick={() => open('progression')}>Change progression</button></section>
+      <div className="goal-weeks" aria-label="Configured weeks">{rows.map(row => {
+        const status = shiftDate(row.startsOn,6) < today ? 'Completed' : row.startsOn > today ? 'Upcoming' : 'Current'
+        return <div className={`goal-row ${status === 'Current' ? 'current' : ''}`} key={row.startsOn}><div><strong>Week {row.week}</strong><span>{row.startsOn} &ndash; {shiftDate(row.startsOn,6)}</span><small>{status}</small></div><strong>{formatMinutes(row.minimumMinutes)}</strong><button className="secondary-button" aria-label={`Edit Week ${row.week}`} disabled={status === 'Completed' || !!scheduleError} onClick={() => open('edit',row)}>{status === 'Completed' ? 'Locked' : 'Edit'}</button></div>
+      })}</div>
+      <div className="goal-actions"><button className="primary-button" disabled={!!scheduleError || rows.length >= 52} onClick={() => open('add')}>+ Add Next Week</button>{rows.length > 1 && rows.at(-1)!.startsOn > today && <button className="secondary-button" disabled={!!scheduleError} onClick={() => open('remove')}>Remove final upcoming week</button>}</div><p className="data-note">{rows.length} of 52 configured weeks. Completed weeks are locked.</p>
+    </>}
+    <RewardStatus />{editor && <GoalEditor {...editor} uid={uid} today={today} close={() => setEditor(null)} />}
   </div>
 }

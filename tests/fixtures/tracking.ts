@@ -1,5 +1,5 @@
-import { applyGoalChanges, migrationFor, scheduleFingerprint } from '../../src/utils/spacingSchedule'
-import type { GoalChange } from '../../src/utils/spacingSchedule'
+import { planUpdate, migrationFor, scheduleFingerprint } from '../../src/utils/spacingSchedule'
+import type { GoalChange, PlanAction } from '../../src/utils/spacingSchedule'
 // Browser-only test service. Imported by Playwright network interception, never by application code.
 import { Timestamp } from 'firebase/firestore'
 import { DEFAULT_PREFERENCES, DEFAULT_SCHEDULE } from '../../src/config/defaults'
@@ -103,12 +103,13 @@ function fixtureSchedule(): SpacingSchedule {
  if (migrated) localStorage.setItem('fixture-schedule', JSON.stringify(migrated))
  return migrated ?? saved ?? DEFAULT_SCHEDULE
 }
-export async function saveGoalChanges(_uid: string, expected: SpacingSchedule, changes: GoalChange[]) {
+export function saveGoalChanges(uid: string, expected: SpacingSchedule, changes: GoalChange[]) { return savePlanAction(uid, expected, {kind:'edit',changes}) }
+export async function savePlanAction(_uid: string, expected: SpacingSchedule, action: PlanAction) {
  if (!navigator.onLine) throw new Error('You are offline. Reconnect before saving goals; your draft has not been saved.')
  if (localStorage.getItem('fixture-write-error')) throw new Error('Could not save goals.')
  const before = fixtureSchedule()
  if (scheduleFingerprint(before) !== scheduleFingerprint(expected)) throw new Error('Goals changed on another device. Cancel this draft and review the latest saved goals before trying again.')
- const after = applyGoalChanges(before, changes)
+ const after = planUpdate(before, action)
  localStorage.setItem('fixture-schedule', JSON.stringify(after)); emit()
 }
 

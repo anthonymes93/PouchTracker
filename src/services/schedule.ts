@@ -2,8 +2,8 @@ import { doc, getDocFromServer, onSnapshot, runTransaction, serverTimestamp } fr
 import type { Transaction } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import type { SpacingSchedule } from '../types/data'
-import { applyGoalChanges, migrationFor, scheduleFingerprint, validateSchedule } from '../utils/spacingSchedule'
-import type { GoalChange } from '../utils/spacingSchedule'
+import { planUpdate, migrationFor, scheduleFingerprint, validateSchedule } from '../utils/spacingSchedule'
+import type { GoalChange, PlanAction } from '../utils/spacingSchedule'
 import { touchRewards } from './rewardRevision'
 import { torontoToday } from '../utils/financeDates'
 
@@ -18,13 +18,13 @@ export async function migrateSchedule(uid: string) {
   try { await runTransaction(db, async transaction => {
     const snapshot = await transaction.get(reference(uid)), before = snapshot.exists() ? snapshot.data() as SpacingSchedule : null
     const after = migrationFor(before)
-    if (after) writeSchedule(transaction, uid, before, after, before ? 'Schedule v2 migration: correct only the exact legacy default; preserve customized targets.' : 'Initialize corrected weekly schedule.')
+    if (after) writeSchedule(transaction, uid, before, after, before ? 'Progressive builder migration: preserve custom targets and require review before trimming generated plans.' : 'Initialize corrected weekly schedule.')
   }) } catch (error) {
     // Some emulator/server contention paths report permission-denied before transaction retry.
     // Accept only a confirmed peer migration; never retry or mask genuine permission failures.
     if ((error as { code?: string }).code !== 'permission-denied') throw error
     const saved = await getDocFromServer(reference(uid))
-    if (!saved.exists() || validateSchedule(saved.data() as SpacingSchedule).schemaVersion !== 2) throw error
+    if (!saved.exists() || validateSchedule(saved.data() as SpacingSchedule).schemaVersion !== 3) throw error
   }
 }
 export function listenSchedule(uid: string, next: (value: SpacingSchedule | null, cached?: boolean) => void, fail: (error: Error) => void) {
@@ -32,7 +32,7 @@ export function listenSchedule(uid: string, next: (value: SpacingSchedule | null
   const stop = onSnapshot(reference(uid), { includeMetadataChanges: true }, snapshot => {
     try {
       const value = snapshot.exists() ? validateSchedule(snapshot.data() as SpacingSchedule) : null
-      if ((!value || value.schemaVersion !== 2) && !snapshot.metadata.fromCache) {
+      if ((migrationFor(value) !== null) && !snapshot.metadata.fromCache) {
         if (!migrating) {
           migrating = true
           void migrateSchedule(uid).catch(error => { if (active) fail(error) }).finally(() => { migrating = false })
@@ -45,7 +45,8 @@ export function listenSchedule(uid: string, next: (value: SpacingSchedule | null
   }, fail)
   return () => { active = false; stop() }
 }
-export async function saveGoalChanges(uid: string, expected: SpacingSchedule, changes: GoalChange[]) {
+export function saveGoalChanges(uid: string, expected: SpacingSchedule, changes: GoalChange[]) { return savePlanAction(uid, expected, { kind: 'edit', changes }) }
+export async function savePlanAction(uid: string, expected: SpacingSchedule, action: PlanAction) {
   if (!db) throw new Error('Firebase is not configured.')
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('You are offline. Reconnect before saving goals; your draft has not been saved.')
   try { await runTransaction(db, async transaction => {
@@ -53,7 +54,7 @@ export async function saveGoalChanges(uid: string, expected: SpacingSchedule, ch
     if (!snapshot.exists()) throw new Error('The schedule is missing. Reload and retry.')
     const before = validateSchedule(snapshot.data() as SpacingSchedule)
     if (scheduleFingerprint(before) !== scheduleFingerprint(expected)) throw new Error('Goals changed on another device. Cancel this draft and review the latest saved goals before trying again.')
-    const after = applyGoalChanges(before, changes, torontoToday())
+    const after = planUpdate(before, action, torontoToday())
     writeSchedule(transaction, uid, before, after, 'User reviewed and saved weekly target changes.')
   }) } catch (error) {
     if ((error as { code?: string }).code === 'permission-denied') {

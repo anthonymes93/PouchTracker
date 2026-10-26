@@ -46,10 +46,13 @@ service cloud.firestore {
       match /settings/schedule {
         function nextRevision() { return !exists(/databases/$(database)/documents/users/$(uid)/settings/schedule) || !('revision' in resource.data) ? 1 : resource.data.revision + 1; }
         allow create, update: if owner(uid)
-          && request.resource.data.keys().hasOnly(['schemaVersion', 'revision', 'timeZone', 'steps'])
-          && request.resource.data.schemaVersion == 2 && request.resource.data.timeZone == 'America/Toronto'
+          && request.resource.data.keys().hasOnly(['schemaVersion', 'revision', 'timeZone', 'steps', 'progressionEnabled', 'incrementMinutes'])
+          && request.resource.data.schemaVersion in [2, 3] && request.resource.data.timeZone == 'America/Toronto'
+          && (request.resource.data.schemaVersion == 2 || (request.resource.data.progressionEnabled is bool && request.resource.data.incrementMinutes in [15, 30, 60]))
           && request.resource.data.revision is int && request.resource.data.revision == nextRevision()
           && request.resource.data.steps is list && request.resource.data.steps.size() > 0 && request.resource.data.steps.size() <= 5200
+          && (request.resource.data.schemaVersion == 2 || request.resource.data.steps.size() <= 52 || (exists(/databases/$(database)/documents/users/$(uid)/settings/schedule) && request.resource.data.steps.size() <= resource.data.steps.size()))
+          && (!exists(/databases/$(database)/documents/users/$(uid)/settings/schedule) || !('schemaVersion' in resource.data) || resource.data.schemaVersion != 3 || request.resource.data.schemaVersion == 3)
           && getAfter(/databases/$(database)/documents/users/$(uid)/settings/schedule/history/$(string(request.resource.data.revision))).data.after == request.resource.data
           && getAfter(/databases/$(database)/documents/users/$(uid)/settings/rewardState).data.sourceRevision == (exists(/databases/$(database)/documents/users/$(uid)/settings/rewardState) ? get(/databases/$(database)/documents/users/$(uid)/settings/rewardState).data.sourceRevision + 1 : 1);
         allow delete: if false;

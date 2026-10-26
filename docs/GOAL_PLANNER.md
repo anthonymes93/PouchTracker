@@ -1,94 +1,109 @@
-# Pouch Spacing Goals
+# Progressive Pouch Spacing Goals
 
-## Corrected schedule
+## Building a plan
 
-All schedule dates are America/Toronto calendar dates. Weeks start at local midnight on Sunday and end Saturday.
+Open Settings > Manage Goals, or Manage Goals beneath Home's spacing progress. The page is `/settings/goals`.
 
-| Week | Dates (2026) | Minutes stored | Display |
-| --- | --- | --- | --- |
-| 1 | October 18–24 | 60 | 1 hr |
-| 2 | October 25–31 | 90 | 1.5 hrs |
-| 3 | November 1–7 | 120 | 2 hrs |
-| 4 | November 8–14 | 180 | 3 hrs |
+The builder shows only explicitly configured weeks. It starts with the corrected four-week schedule:
 
-Week 2 is current on both October 25 and October 26, 2026. Weeks 5 onward hold 180 minutes until explicitly edited. No automatic increases, background jobs, or Cloud Functions are involved. An app reopened after a weekly boundary derives its target from the local Toronto date. Calendar-label arithmetic avoids treating a DST week as exactly 168 elapsed hours.
+| Week | Toronto dates | Target |
+| --- | --- | --- |
+| 1 | October 18-24, 2026 | 1 hr |
+| 2 | October 25-31, 2026 | 1.5 hrs |
+| 3 | November 1-7, 2026 | 2 hrs |
+| 4 | November 8-14, 2026 | 3 hrs |
 
-## Using the planner
+Week 2 is current on October 26. Week 4 remains 3 hrs because this already exceeds Week 3 by the default minimum increase. There is no rolling 52-week calendar and no automatic row creation.
 
-Open Settings → Manage Goals, or the small Manage Goals link below Home's spacing target. The dedicated page is `/settings/goals`.
+**+ Add Next Week** opens a review for exactly one additional week. Save changes commits it; Cancel leaves the plan unchanged. Add as many as you need, up to 52 configured weeks total, including completed weeks. Dates normally advance seven calendar days. If the plan expired long ago, adding resumes on the next Toronto Sunday without inventing intervening historical rows; the last target continues throughout that gap.
 
-Months contain compact, collapsible weekly rows. Each row shows its dates, week number, formatted target, and Completed/Current/Upcoming status. The current month opens initially. Completed weeks are locked; the app deliberately has no historical edit control.
+Every current/upcoming row has an Edit button. Use the hours/minutes picker (15-minute increments, up to 24 hours), review the resulting chain, and Save or Cancel. Completed weeks are locked. The final upcoming week can be removed after confirmation; other rows cannot be deleted through the builder. Removal never deletes nicotine entries or audit records.
 
-Edit a current or future week using Hours and Minutes, from 15 minutes through 24 hours in 15-minute increments. Copy previous week copies its target into the draft. Review changes, then Save changes; Cancel leaves saved goals intact. The current-week warning explains that today's progress, earlier scores within the current week, and provisional XP can change.
+Beyond the last explicitly configured week, its goal continues indefinitely. Home does not invent a next goal or week number. No scheduled functions or background jobs are needed.
 
-Plan future weeks supports a chosen range and three operations: apply one target, increase each existing target by a specified increment, or reset the range to the target immediately preceding it. Reset requires reviewing an explicit confirmation. Every bulk operation lists all old/new targets before saving; it is committed atomically. Lower targets and repeated targets are permitted.
+## Progression and maintenance
 
-The initial saved plan contains Weeks 1–52. The view rolls forward to the current week plus 51 upcoming weeks, retaining past rows for review. Thus, on October 25 it includes completed Week 1 and the horizon of Weeks 2–53. Unconfigured trailing weeks inherit the last saved target. Saving materializes the horizon so changing one week cannot silently change later weeks. Earlier records and dates are retained.
+Minimum Weekly Increase offers 15 min, **30 min (default)**, and 1 hr. Change progression opens a preview before applying an increment change. Automatic increases can explicitly be **Paused**, allowing equal or lower targets and leaving later weeks unchanged.
 
-## Persistence and migration
+While enabled, future rows are evaluated in date order:
+
+```
+minimumNextGoal = previousWeekGoal + configuredIncrement
+nextWeekGoal = max(existingNextWeekGoal, minimumNextGoal)
+```
+
+For example, editing Week 3 from 2 hrs to 3 hrs raises Week 4 from 3 hrs to 3.5 hrs. If Week 4 already has 4 hrs, it stays at 4 hrs. The calculation continues through all later configured weeks, never creating additional ones. Preview labels automatically adjusted targets. A requested lower target is raised to the required minimum while progression is enabled; pause progression first to intentionally plan maintenance or step-down weeks.
+
+Changing progression preferences never changes completed weeks or the current goal. Editing the current week is explicit and includes a warning about scores and provisional XP. Subsequent future weeks cascade from its new value. Disabling progression does not undo earlier saved increases.
+
+If a cascade would exceed 24 hours, the entire change is rejected before saving; it is never clamped into equal targets. Use a smaller increment, fewer weeks, or pause progression. The 52-week count is a maximum, not a target to fill automatically.
+
+## Versioned Firestore schema
 
 The authoritative document remains `users/{uid}/settings/schedule`:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "revision": 1,
   "timeZone": "America/Toronto",
+  "progressionEnabled": true,
+  "incrementMinutes": 30,
   "steps": [
     { "week": 1, "startsOn": "2026-10-18", "minimumMinutes": 60 },
-    { "week": 2, "startsOn": "2026-10-25", "minimumMinutes": 90 }
+    { "week": 2, "startsOn": "2026-10-25", "minimumMinutes": 90 },
+    { "week": 3, "startsOn": "2026-11-01", "minimumMinutes": 120 },
+    { "week": 4, "startsOn": "2026-11-08", "minimumMinutes": 180 }
   ]
 }
 ```
 
-The example abbreviates the steps list. All calculations remain in minutes/milliseconds.
+In version 3, every saved step is an initial migrated week, a user-added week, or a week explicitly retained through migration review. No generated placeholder rows are written.
 
-On authenticated profile initialization, and when the schedule listener receives an unversioned server document, the production service runs a transaction:
+Every save uses a transaction that re-reads the document, verifies the reviewed fingerprint/revision, constructs and validates the complete result, writes it with the next revision, appends an immutable `settings/schedule/history/{revision}` event, and increments `settings/rewardState.sourceRevision`. Audit events retain complete before/after plans, reason, revision and server timestamp. This includes migration trims and removed future targets.
 
-1. Read the current persisted document, never a stale default copy.
-2. If missing, initialize the corrected plan.
-3. If its timezone, four dates, week numbers, and targets exactly match the old default (October 23/30, November 6/13; 60/90/120/180), correct it to the new schedule. Map property order does not affect matching.
-4. Otherwise preserve valid customized effective dates and values, adding version metadata only. A version-2 document is not remigrated.
-5. Write the schedule, immutable `settings/schedule/history/{revision}` event, and increment `settings/rewardState.sourceRevision` in the same transaction.
+Listeners synchronize across devices. Stale drafts are rejected with an instruction to cancel and review the latest plan. Offline saves fail visibly and are not queued. Cached settings are labelled; drafts remain available after a save error. Account changes unmount drafts and unsubscribe old listeners. Corrupt/unsupported settings surface an error rather than being overwritten.
 
-Each audit event stores `revision`, full `before` and `after` schedules, a `reason`, and server timestamp `at`. Historical migration is therefore reviewable even though manual past-week editing is disabled. Corrupt, duplicate, unsupported-version or non-Toronto configurations surface an error and are never replaced with guessed defaults.
+## Safe migration from the old planner
 
-Every user save compares the reviewed schedule's canonical fingerprint/revision with a fresh transaction read. If another device changed it, saving fails with instructions to cancel and reopen the draft. The SDK can retry transaction contention, but a stale user's choices never overwrite a newer plan. A confirmed peer migration is accepted if the emulator/server reports a permission conflict instead of a transaction retry; other permission errors remain errors.
+Migration never assumes that 52 stored entries were intentional or that repeated values prove a row was generated.
 
-Listeners synchronize saved changes. Cached goals are labelled. Offline saves fail visibly and preserve the draft; they are not queued. Retrying requires reconnection. Account changes unmount the editor and unsubscribe the previous account's listeners. These operations use the existing Spark-compatible client SDK; they do not require paid backend infrastructure. See [Firebase's transaction guidance](https://firebase.google.com/docs/firestore/manage-data/transactions).
+- Missing settings initialize only the corrected four weeks.
+- The exact original four-week Friday default is corrected to the Sunday dates above.
+- Valid unversioned/version-2 schedules with at most four rows retain customized dates and targets. They gain version-3 progression preferences. Existing custom maintenance/step-down plans start paused so their goals are not silently changed.
+- Older plans with more than four rows are **not automatically trimmed or rewritten**. The main builder shows a compact Review existing plan prompt rather than 52 rows. The existing saved schedule remains authoritative on all other pages while review is pending.
+- Review lets the user inspect all existing values, choose how many leading weeks to retain, and enable or pause progression. Keep all preserves all weeks; pause also preserves every target exactly. A shorter plan requires reviewing every removed target, including customized values, before saving. Current and historical weeks cannot be removed. Cancel makes no change.
+- Removed rows remain in immutable before/after audit history. Existing audit documents and usage data are never deleted.
 
-## Schedule and reward consistency
+Because version 2 did not record whether each week was generated or deliberately configured, confirmation is required rather than guessing from values. Old plans exceeding 52 rows can be retained intact for historical safety, but cannot add more; new version-3 plans cannot exceed 52. No automatic migration or add operation silently changes historical weeks.
 
-`utils/spacingSchedule.ts` supplies target selection, migration, horizon generation, validation, and edit construction. Home, performance reporting, Calendar/Stats, and reward evaluation consume the same persisted plan through this shared selection logic.
+## Shared calculations and historical integrity
 
-- Home uses the target effective on today's Toronto date.
-- Completed daily scores, comparisons and personal bests recompute from entries, coverage, and the target effective on each historical date. They are not frozen copies of today's goal.
-- Ordinary XP and consecutive-interval achievements retain the existing **interval-start target** policy. An interval crossing Sunday keeps the target effective at its starting pouch. Home can therefore show the new weekly target while an already-running reward interval still explains its older start target. No usage entry is invented at the boundary.
-- Daily performance continues to exclude cross-midnight/sleep intervals under the existing evidence policy; only same-day eligible intervals contribute to that day's spacing score.
-- A current-week edit changes that week's effective target, including earlier days in the same week. Future edits do not change completed weeks.
-- The atomic source-revision increment invalidates reward caches. On Home, Rewards, or the planner, the existing reconciler re-evaluates evidence and updates deterministic award IDs, appending correction history. Unsupported awards become invalidated, supported awards can be restored, and unchanged awards are not duplicated. Pending review and errors stay visible. Reconciliation resumes after reconnect; no background job is required.
+`utils/spacingSchedule.ts` is the shared selector and plan-construction service. Home, Calendar/Stats, performance reports and reward evaluation use the same saved effective dates. Toronto local calendar dates determine transitions; actual DST elapsed time remains handled by the existing timestamp utilities.
 
-Nicotine entries, coverage, pricing snapshots, baselines, spending and savings are not written by the schedule service. Home keeps Log Pouch directly under the live timer and Other Logging at the bottom.
+Home uses today's effective target. Daily performance uses each day's historical target. Ordinary XP and interval achievements retain the existing interval-start policy: an interval crossing Sunday keeps the goal effective at its starting pouch, while Home can show the new current-week goal. Daily scores exclude cross-midnight/sleep intervals under the existing evidence rules. A current-week edit can recalculate earlier days in that same week; future edits cannot rewrite completed weeks.
 
-## Duration display
+Changes increment the reward source revision atomically. The existing reconciler re-evaluates evidence on Home, Rewards or the builder, invalidates unsupported awards, restores supported ones, and records corrections under deterministic award IDs without duplicate XP. Pending review/errors remain visible and reconciliation resumes after reconnection.
 
-`formatMinutes` is display-only: below one hour it uses minutes; whole/half hours use `1 hr`, `1.5 hrs`, `2 hrs`, etc.; other values use `1 hr 15 min` or `2 hrs 15 min`. Measured fractional intervals display to one decimal minute. Unknown values display Unavailable. Home, performance tables/charts, comparisons, rewards/evidence and planner controls share it. The main live timer remains HH:MM:SS. Achievement requirements expressed as percentages or counts remain percentages/counts.
+Nicotine entries, prices, baselines, savings records and coverage are not written by this service. Log Pouch remains directly beneath the live timer; Other Logging remains at the bottom. Both Forest Green and Ocean Blue themes are preserved.
 
-## Deployment
+## Duration formatting
 
-Deploy the updated `firestore.rules` before releasing the app:
+`formatMinutes` is display-only. Below one hour it uses minutes; whole/half hours use `1 hr`, `1.5 hrs`, `2 hrs`; other values use `1 hr 15 min`. Measured fractional minutes display to one decimal. The main live timer remains HH:MM:SS. Storage and calculations remain minutes/milliseconds.
+
+## Deployment and testing
+
+Redeploy **firestore.rules before releasing this app**, then deploy the app using the existing Vercel workflow:
 
 ```sh
 firebase deploy --only firestore:rules
 ```
 
-Schedule writes now require version increments, an atomic matching audit event, and a reward source-revision increment. Owners may read their schedule/audit trail; other accounts cannot. Schedule deletion and history modification/deletion are denied. Rules validate the document envelope, bounds, revision and audit/reward consistency; client validation checks every variable-length step and planner constraint. These personal records are not a tamper-proof competitive system.
+Rules accept the version-3 progression fields, enforce supported increments, prevent version downgrades, bound configured counts while retaining oversized legacy history, and require an atomic audit/reward revision update. Owner-only access and immutable audit rules remain. The variable-length step values and edit policy are validated in the shared service; these personal records are not tamper-proof competitive scores.
 
-No new indexes, environment variables, OAuth configuration, manual document deletion, or billing changes are needed. Deploy the app through the existing Vercel workflow. Opening the deployed app while signed in performs the persisted migration; the development/test runs do not mutate the production account. If a custom plan is preserved, it will continue to show its own targets rather than forcing the default 90 minutes.
+No new indexes, environment variables, OAuth changes, paid services, or manual document edits are needed. Sign in to the new app and follow Review existing plan if shown. Tests use isolated fixtures and the demo Firestore emulator, never the live account or `.env.local`.
 
-## Testing
-
-Use Node 24.12+ and Java 21 for the Firestore emulator:
+Use Node 24.12+; emulator tests require Java 21:
 
 ```sh
 npm run typecheck
@@ -98,16 +113,8 @@ npm run test:rules
 npm run build
 ```
 
-`goal-planner-utils.spec.ts` covers all 52 dates, Sunday/DST transitions, formatting, increments, current/future/bulk edits, custom preservation, historical scores and XP invalidation/restoration. `goal-planner-flows.spec.ts` covers mobile themes, reviews, copy/reset, synchronization, conflicts, errors/offline state, corruption, sign-out, refresh and unchanged entries/pricing. Existing Home tests assert above-fold Log Pouch and bottom-only Other Logging at five mobile sizes.
+Coverage includes individual additions, 52-week cap, increments and pause, sequential cascades, higher custom targets, no phantom weeks, deletion confirmation, ambiguous generated-plan review, immutable migration history, real emulator listeners/concurrent saves, unchanged tracking/pricing, historical XP correction, mobile themes, and Home action positioning.
 
-`schedule-emulator.mjs` bundles the actual production service against isolated clients. It seeds old records through the emulator admin endpoint, then tests migration, concurrent saves, listeners, audit immutability, authorization, missing/corrupt configuration and preserved pricing/entries. `rewards-emulator.mjs` tests actual reconciliation, invalidation/restoration and duplicate prevention. The harness rejects non-emulator execution and never reads `.env.local`.
+Physical iPhone and live cross-device testing have not been performed. Existing custom non-Sunday effective dates remain preserved; arbitrary historical corrections require a deliberate audited administrative workflow. The existing non-blocking Vite large-chunk warning may remain.
 
-## Known limitations
-
-- Physical iPhone and live cross-device testing have not been performed. Browser engines, simulated small viewports, and two real emulator clients provide automated coverage.
-- Existing customized non-Sunday effective dates are preserved rather than silently shifted; new trailing weeks use Sundays. Arbitrary historical/custom dates require deliberate administrative correction outside this planner, preserving an audit record and updating reward revision.
-- History is retained in the schedule document, with a defensive 5,200-step read/rules bound and Firestore's document-size limit. This is ample for the requested yearly planner; a multi-decade archive could eventually need a separate storage design.
-- Missing/corrupt settings cannot be repaired offline. A corrupt schedule requires inspection rather than automatic destructive reset.
-- Reconciliation can take several transactions for a long history. It is resumable and reports pending state; saved XP should be treated as under review until it completes.
-
-Validation completed October 26, 2026: **105 unit/Chromium browser tests**, **7 WebKit planner/Home tests**, and **50 Firestore emulator checks** passed. Strict TypeScript and the production/PWA build passed. The existing non-blocking Vite large-chunk warning remains. The WebKit corruption test explicitly waits for initial settings to load before injecting corrupt data, avoiding a test setup race.
+Validation: 107 unit/Chromium tests passed with four workers, 8 WebKit builder/Home tests passed, and 52 Firestore emulator checks passed. Strict TypeScript and the production/PWA build passed. An initial high-concurrency run hit a timing failure in an existing timer test; its isolated rerun and the complete four-worker run both passed. Mobile preview rendering was inspected at 320px in both themes; two WebKit builder tests were repeated after correcting preview punctuation.
