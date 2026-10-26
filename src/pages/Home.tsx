@@ -1,3 +1,4 @@
+import { SleepControls } from '../components/SleepControls'
 import { ArrowUpRight, CircleDashed, Cigarette, Flame, Layers3, Leaf, Wallet } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
 import { StatCard } from '../components/ui/StatCard'
@@ -17,7 +18,7 @@ export default function Home() {
   const { counts, today, retry } = useNicotineEntries()
   const { preferences } = useTheme()
   const unavailable = today.loading || Boolean(today.error) || (today.snapshot.fromCache && today.snapshot.entries.length === 0)
-  return <div className="home-dashboard"><PageHeader eyebrow="YOUR DAILY CHECK-IN" title="Make room for progress." description="A clearer picture of your habits, one day at a time." /><PouchTimer />
+  return <div className="home-dashboard"><PageHeader eyebrow="YOUR DAILY CHECK-IN" title="Make room for progress." description="A clearer picture of your habits, one day at a time." /><PouchTimer /><SleepControls />
     <section aria-labelledby="overview-title"><div className="section-label"><h2 id="overview-title">Daily overview</h2><span className="small-muted">Today · {preferences.timeZone}</span></div>
       {today.error && <div className="error-banner" role="alert">{today.error}<button className="text-button" onClick={retry}>Retry daily counts</button></div>}
       <div className="stats-grid"><StatCard icon={CircleDashed} label="Pouches today" value={unavailable ? undefined : counts.pouch} /><StatCard icon={Cigarette} label="Cigarettes today" value={unavailable ? undefined : counts.cigarette} /><StatCard icon={Flame} label="Cigars today" value={unavailable ? undefined : counts.cigar} /><StatCard icon={Layers3} label="Total uses today" value={unavailable ? undefined : counts.total} /><StatCard icon={Wallet} label={financialToday.unknown ? `Spent today · known only (${financialToday.unknown} unpriced)` : 'Spent today · recorded CAD'} value={finance.loading || finance.error ? undefined : formatCost(financialToday.total)} /></div>

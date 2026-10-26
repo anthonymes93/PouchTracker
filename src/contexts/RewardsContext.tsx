@@ -40,11 +40,11 @@ export function RewardsProvider({ children }: { children: ReactNode }) {
   const needsReview = useMemo(() => {
     if (!result) return false
     const previous = new Map([...feed.awards, ...feed.achievements].map(value => [value.id, value]))
-    return [...reconcilePlan(feed.awards, result.awards), ...reconcilePlan(feed.achievements, result.achievements)].some(value => !previous.has(value.id) || !awardEqual(previous.get(value.id)!, value))
-  }, [feed.awards, feed.achievements, result])
+    return [...reconcilePlan(feed.awards, result.awards, model?.source.sleep), ...reconcilePlan(feed.achievements, result.achievements, model?.source.sleep)].some(value => !previous.has(value.id) || !awardEqual(previous.get(value.id)!, value))
+  }, [feed.awards, feed.achievements, result, model])
   const stale = feed.processedRevision !== feed.revision || needsReview || finance.pending
   useEffect(() => {
-    if (error || !['/', '/rewards', '/settings/goals'].includes(path) || !result || feed.loading || feed.fromCache || finance.fromCache || finance.pending || (!stale && !needsReview)) return
+    if (error || !['/', '/rewards', '/settings/goals', '/settings/sleep'].includes(path) || !result || feed.loading || feed.fromCache || finance.fromCache || finance.pending || (!stale && !needsReview)) return
     const timer = setTimeout(() => {
       if (inFlight.current || !navigator.onLine) return
       inFlight.current = true; setSyncing(true); setError(null)

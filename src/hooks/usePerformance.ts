@@ -8,7 +8,7 @@ export function useSleep() {
   const [sleep, setSleep] = useState<SleepWindow | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, retry] = useState(0)
-  useEffect(() => { setSleep(null); setError(null); return listenSleep(uid, value => { setSleep(value); setError(null) }, err => setError(err.message)) }, [uid, attempt])
+  useEffect(() => { let active=true; setSleep(null); setError(null); const stop=listenSleep(uid, value => { if(active){setSleep(value); setError(null)} }, err => {if(active)setError(err.message)}); return ()=>{active=false;stop()} }, [uid, attempt])
   return { sleep, error, retry: () => retry(n => n + 1) }
 }
 export function useEntryRange(start: string, end: string) {

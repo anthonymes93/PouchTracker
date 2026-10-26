@@ -99,12 +99,25 @@ service cloud.firestore {
         }
       }
       match /settings/sleep {
-        allow create, update: if owner(uid) && request.resource.data.keys().hasOnly(['start', 'end'])
-          && request.resource.data.start is string && request.resource.data.end is string
-          && request.resource.data.start.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
-          && request.resource.data.end.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
-          && request.resource.data.start != request.resource.data.end;
-        allow delete: if owner(uid);
+        allow create, update: if owner(uid)
+          && request.resource.data.keys().hasOnly(['schemaVersion','revision','periods','interruption'])
+          && request.resource.data.schemaVersion == 2 && request.resource.data.revision is int
+          && request.resource.data.revision == ((!exists(/databases/$(database)/documents/users/$(uid)/settings/sleep) || !('revision' in resource.data)) ? 1 : resource.data.revision + 1)
+          && request.resource.data.periods is list && request.resource.data.periods.size() <= 3000
+          && (request.resource.data.interruption == null || (request.resource.data.interruption.keys().hasOnly(['entryId','at']) && request.resource.data.interruption.entryId is string && request.resource.data.interruption.at is timestamp))
+          && getAfter(/databases/$(database)/documents/users/$(uid)/settings/sleep/history/$(string(request.resource.data.revision))).data.after == request.resource.data
+          && getAfter(/databases/$(database)/documents/users/$(uid)/settings/rewardState).data.sourceRevision == (exists(/databases/$(database)/documents/users/$(uid)/settings/rewardState) ? get(/databases/$(database)/documents/users/$(uid)/settings/rewardState).data.sourceRevision + 1 : 1);
+        allow delete: if false;
+        match /history/{version} {
+          allow create: if owner(uid)
+            && request.resource.data.keys().hasOnly(['revision','before','after','reason','at'])
+            && request.resource.data.revision is int && string(request.resource.data.revision) == version
+            && request.resource.data.revision == request.resource.data.after.revision
+            && request.resource.data.at == request.time && request.resource.data.reason is string
+            && request.resource.data.after == getAfter(/databases/$(database)/documents/users/$(uid)/settings/sleep).data
+            && request.resource.data.before == (exists(/databases/$(database)/documents/users/$(uid)/settings/sleep) ? get(/databases/$(database)/documents/users/$(uid)/settings/sleep).data : null);
+          allow update, delete: if false;
+        }
       }
       match /settings/pricing {
         allow create, update: if owner(uid) && request.resource.data.keys().hasOnly(['pouch', 'cigarette', 'cigarPresetsCents'])

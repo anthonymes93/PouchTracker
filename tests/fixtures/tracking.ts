@@ -9,7 +9,10 @@ import type { Baseline, PriceSnapshot, Pricing } from '../../src/types/finance'
 import { EMPTY_PRICING } from '../../src/types/finance'
 import type { FinanceData } from '../../src/services/finance'
 import { dateKey } from '../../src/utils/dateTime'
-import { DEFAULT_SLEEP } from '../../src/utils/performance'
+import { RECORDED_SLEEP as DEFAULT_SLEEP } from './sleep'
+import { EMPTY_SLEEP, changeSleep, interruptSleep, sleepFingerprint } from '../../src/utils/sleep'
+import type { SleepAction } from '../../src/utils/sleep'
+import type { SleepData } from '../../src/types/sleep'
 import type { SleepWindow } from '../../src/utils/performance'
 import type { RewardFeed, StoredAward } from '../../src/types/rewards'
 import { awardEqual, buildRewardModel, evaluateRewards, reconcilePlan } from '../../src/utils/rewards'
@@ -34,6 +37,7 @@ function snapshot(values: StoredEntry[]): EntrySnapshot { return { entries: valu
 export function createEntry(uid: string, kind: ProductKind, price: number | null, pricing?: Pricing) {
   const id = crypto.randomUUID()
   if (localStorage.getItem('fixture-write-error')) return { id, completion: Promise.reject(new Error('Could not save test entry.')) }
+  if(kind==='pouch'){const changed=interruptSleep(fixtureSleep(),Date.now(),id);if(changed)localStorage.setItem('fixture-sleep',JSON.stringify(changed))}
   store([...read(), { id, uid, kind, time: Date.now(), costCents: price, priceSnapshot: kind === 'cigar' ? { packCents: price!, quantity: 1 } : pricing?.[kind] ?? null }])
   const completion = localStorage.getItem('fixture-delay') ? new Promise<void>(resolve => setTimeout(resolve, 3000)) : Promise.resolve()
   return { id, completion }
@@ -68,8 +72,23 @@ export function saveCoverage(_uid: string, date: string, complete: boolean) {
 export function listenRange(_uid: string, start: string, end: string, next: (value: EntrySnapshot) => void, fail: (error: Error) => void) {
   return listen(() => { const values = read(); const selected = values.filter(value => dateKey(value.time) >= start && dateKey(value.time) <= end); const preceding = values.filter(value => value.kind === 'pouch' && dateKey(value.time) < start).sort((a, b) => b.time - a.time).slice(0, 1); next(snapshot([...selected, ...preceding])) }, fail)
 }
-export function listenSleep(_uid: string, next: (value: SleepWindow) => void, fail: (error: Error) => void) { return listen(() => next(JSON.parse(localStorage.getItem('fixture-sleep') || JSON.stringify(DEFAULT_SLEEP))), fail) }
-export function saveSleep(_uid: string, value: SleepWindow) { localStorage.setItem('fixture-sleep', JSON.stringify(value)); emit(); return Promise.resolve() }
+export function listenSleep(_uid: string, next: (value: SleepWindow) => void, fail: (error: Error) => void) { return listen(() => next(fixtureSleep()), fail) }
+function fixtureSleep():SleepData {
+ const value=JSON.parse(localStorage.getItem('fixture-sleep') || JSON.stringify(DEFAULT_SLEEP))
+ if(value.schemaVersion!==2)return {...EMPTY_SLEEP,revision:1}
+ return value
+}
+export async function saveSleepAction(_uid:string,expected:SleepData,action:SleepAction){
+ if(!navigator.onLine || localStorage.getItem('fixture-write-error'))throw new Error('Could not save sleep records. Reconnect and retry.')
+ const before=fixtureSleep()
+ if(sleepFingerprint(before)!==sleepFingerprint(expected))throw new Error('Sleep records changed on another device. Close this draft and review the latest records.')
+ const after=changeSleep(before,action)
+ localStorage.setItem('fixture-sleep',JSON.stringify(after));emit()
+}
+export function sleepRef(){throw new Error('Unexpected live Firebase reference in isolated test')}
+export function decodeSleep(){throw new Error('Unexpected live Firebase decode in isolated test')}
+export function writeSleep(){throw new Error('Unexpected live Firebase write in isolated test')}
+
 export const EMPTY_REWARDS: RewardFeed = { awards: [], achievements: [], revision: 0, processedRevision: -1, loading: true, fromCache: false, pending: false }
 function rewardRevision() {
   const fingerprint = ['fixture-entries', 'fixture-coverage', 'fixture-baselines', 'fixture-sleep', 'fixture-schedule'].map(key => localStorage.getItem(key)).join('|')
@@ -82,11 +101,11 @@ export function listenRewards(_uid: string, next: (value: RewardFeed) => void, f
 }
 export async function reconcileRewards(_uid: string, now: number, _feed: RewardFeed) {
   const revision = rewardRevision()
-  const model = buildRewardModel({ entries: snapshot(read()).entries, coverage: JSON.parse(localStorage.getItem('fixture-coverage') || '[]'), baselines: JSON.parse(localStorage.getItem('fixture-baselines') || '[]'), schedule: fixtureSchedule(), sleep: JSON.parse(localStorage.getItem('fixture-sleep') || JSON.stringify(DEFAULT_SLEEP)) }, now)
+  const model = buildRewardModel({ entries: snapshot(read()).entries, coverage: JSON.parse(localStorage.getItem('fixture-coverage') || '[]'), baselines: JSON.parse(localStorage.getItem('fixture-baselines') || '[]'), schedule: fixtureSchedule(), sleep: fixtureSleep() }, now)
   const result = evaluateRewards(model, now)
   for (const [key, desired] of [['fixture-rewards', result.awards], ['fixture-achievements', result.achievements]] as const) {
     const previous: StoredAward[] = JSON.parse(localStorage.getItem(key) || '[]')
-    const changed = reconcilePlan(previous, desired).map(award => {
+    const changed = reconcilePlan(previous, desired, model.source.sleep).map(award => {
       const old = previous.find(value => value.id === award.id)
       return old && awardEqual(old, award) ? old : { ...award, revision: (old?.revision ?? 0) + 1, firstRecordedAt: old?.firstRecordedAt ?? now, updatedAt: now, reason: 'Fixture evidence reconciliation.' }
     })

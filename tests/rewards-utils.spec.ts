@@ -4,7 +4,7 @@ import { DEFAULT_SCHEDULE } from '../src/config/defaults'
 import { MILESTONES } from '../src/config/rewards'
 import type { Entry } from '../src/types/data'
 import type { RewardSource, StoredAward } from '../src/types/rewards'
-import { DEFAULT_SLEEP } from '../src/utils/performance'
+import { RECORDED_SLEEP as DEFAULT_SLEEP, awakeRange } from './fixtures/sleep'
 import { awakeProgress, levelProgress } from '../src/utils/rewardTime'
 import { awardEqual, buildRewardModel, evaluateRewards, goalAt, reconcilePlan, rewardTotals } from '../src/utils/rewards'
 import { fromDateTimeInput } from '../src/utils/dateTime'
@@ -31,9 +31,9 @@ test('sleep exclusion, overnight coverage and real DST awake durations', () => {
   expect(awakeProgress(start, end, DEFAULT_SLEEP, [60]).minutes).toBe(60)
   expect(awakeProgress(start, end, DEFAULT_SLEEP, [60]).reached).toEqual([end])
   expect(derive(source([entry('night', '2026-10-23T22:30')], ['2026-10-23']), end).awards[0].status).toBe('provisional')
-  const fall = awakeProgress(Date.parse('2026-11-01T05:00:00Z'), Date.parse('2026-11-01T07:00:00Z'), { start: '01:30', end: '01:45' }, [60])
+  const fall = awakeProgress(Date.parse('2026-11-01T05:00:00Z'), Date.parse('2026-11-01T07:00:00Z'), {...awakeRange(Date.parse('2026-11-01T05:00Z'),Date.parse('2026-11-01T07:00Z')),periods:[...awakeRange(Date.parse('2026-11-01T05:00Z'),Date.parse('2026-11-01T07:00Z')).periods,{id:'first-sleep',kind:'sleep',startMs:Date.parse('2026-11-01T05:30Z'),endMs:Date.parse('2026-11-01T05:45Z')},{id:'second-sleep',kind:'sleep',startMs:Date.parse('2026-11-01T06:30Z'),endMs:Date.parse('2026-11-01T06:45Z')}]}, [60])
   expect(fall.minutes).toBe(90)
-  expect(awakeProgress(Date.parse('2026-03-08T06:00:00Z'), Date.parse('2026-03-08T08:00:00Z'), { start: '02:00', end: '03:00' }, []).minutes).toBe(120)
+  expect(awakeProgress(Date.parse('2026-03-08T06:00:00Z'), Date.parse('2026-03-08T08:00:00Z'), awakeRange(Date.parse('2026-03-08T06:00Z'),Date.parse('2026-03-08T08:00Z')), []).minutes).toBe(120)
 })
 test('closed app catch-up, stable IDs and ordinary single-interval cap', () => {
   const data = source(undefined, ['2026-10-23']), first = derive(data), refresh = derive(data)

@@ -33,7 +33,9 @@ export async function rewardEmulatorChecks(client, check, denied) {
     const schedule = { schemaVersion: 2, revision: 1, timeZone: 'America/Toronto', steps: [{ week: 1, startsOn: '2026-10-18', minimumMinutes: 60 }] }
     batch.set(ref(a, 'settings/schedule'), schedule)
     batch.set(ref(a, 'settings/schedule/history/1'), { revision: 1, before: null, after: schedule, at: serverTimestamp(), reason: 'Test initialization' })
-    batch.set(ref(a, 'settings/sleep'), { start: '23:00', end: '09:00' })
+    const sleep={schemaVersion:2,revision:1,interruption:null,periods:[{id:'confirmed',kind:'awake',start:Timestamp.fromMillis(originalTime),end:Timestamp.fromMillis(now+10000)}]}
+    batch.set(ref(a,'settings/sleep'),sleep)
+    batch.set(ref(a,'settings/sleep/history/1'),{revision:1,before:null,after:sleep,at:serverTimestamp(),reason:'Explicit test awake confirmation'})
     batch.set(ref(a, 'entries/anchor'), entry)
     batch.set(ref(a, 'coverage/2026-10-23'), { date: '2026-10-23', complete: true, updatedAt: serverTimestamp() })
     batch.set(ref(a, 'settings/rewardState'), { sourceRevision: 1 }); await batch.commit()

@@ -40,8 +40,10 @@ test('zero confirmation, sleep settings, comparisons and extended progress', asy
   await page.getByRole('button', { name: 'Compare months or date ranges' }).click(); await expect(page.getByText('No equivalent confirmed days available.')).toBeVisible()
   await page.getByRole('button', { name: 'Load six-month progress' }).click(); await expect(page.getByRole('heading', { name: 'Monthly progress', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Load all-time bests' }).click(); await expect(page.getByText(/All confirmed history/)).toBeVisible()
-  await page.goto('/settings'); await page.getByLabel('Sleep ends').fill('11:00'); await page.getByRole('button', { name: 'Save sleep window' }).click(); await expect(page.getByText('Sleep window saved.')).toBeVisible()
-  await page.goto('/calendar'); await page.getByRole('button', { name: '2026-10-23, Unrated', exact: true }).click(); await expect(page.getByLabel('Daily report').getByText(/At least 2 eligible daytime intervals/)).toBeVisible()
+  await page.goto('/settings/sleep'); await expect(page.getByRole('button',{name:'Add sleep period'})).toBeVisible()
+  await page.evaluate(()=>{localStorage.setItem('fixture-sleep',JSON.stringify({schemaVersion:2,revision:2,periods:[],interruption:null}));dispatchEvent(new Event('fixture-update'))})
+  await page.goto('/calendar'); await page.getByRole('button',{name:'2026-10-23, Unrated',exact:true}).click(); await expect(page.getByLabel('Daily report').getByText(/coverage is unknown/)).toBeVisible()
+
 })
 test('calendar handles loading and errors and recalculates remote sleep changes', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('fixture-mode', 'loading'))

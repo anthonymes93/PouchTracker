@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { rewardEmulatorChecks } from './rewards-emulator.mjs'
 import { scheduleEmulatorChecks } from './schedule-emulator.mjs'
+import { sleepEmulatorChecks } from './sleep-emulator.mjs'
 import { initializeApp, deleteApp } from 'firebase/app'
 import { connectFirestoreEmulator, doc, getDoc, getDocs, collection, getFirestore, setDoc, updateDoc, deleteDoc, serverTimestamp, writeBatch, terminate, query, where, orderBy, limit, Timestamp, runTransaction } from 'firebase/firestore'
 
@@ -26,6 +27,7 @@ async function baseline(date, categories = { pouch: { dailyCountMilli: 12000, pr
 }
 try {
   await scheduleEmulatorChecks(client, check, denied)
+  await sleepEmulatorChecks(client, check, denied)
   await check('owner can save valid pricing', () => setDoc(ref(alice, 'settings/pricing'), price))
   await check('individual cigar presets are accepted', () => setDoc(ref(alice, 'settings/pricing'), { ...price, cigarPresetsCents: [190, 275, 350] }))
   await check('cigar presets require three prices', () => denied(() => setDoc(ref(alice, 'settings/pricing'), { ...price, cigarPresetsCents: [190, 230] })))
@@ -50,7 +52,7 @@ try {
   await check('existing entries remain writable by owner', () => setDoc(ref(alice, 'entries/legacy'), { kind: 'pouch', costCents: null }))
   await check('existing preferences remain writable by owner', () => setDoc(ref(alice, 'settings/preferences'), { theme: 'ocean' }))
   await check('another account cannot overwrite entries', () => denied(() => setDoc(ref(bob, 'entries/legacy'), { kind: 'cigar' })))
-  await check('owner can save sleep window', () => setDoc(ref(alice, 'settings/sleep'), { start: '23:00', end: '09:00' }))
+  await check('legacy fixed sleep writes require migration, not new clock windows', () => denied(() => setDoc(ref(alice, 'settings/sleep'), { start: '23:00', end: '09:00' })))
   await check('invalid sleep time is denied', () => denied(() => setDoc(ref(alice, 'settings/sleep'), { start: '24:00', end: '09:00' })))
   await check('identical sleep times are denied', () => denied(() => setDoc(ref(alice, 'settings/sleep'), { start: '09:00', end: '09:00' })))
   await check('additional sleep fields are denied', () => denied(() => setDoc(ref(alice, 'settings/sleep'), { start: '23:00', end: '09:00', extra: true })))

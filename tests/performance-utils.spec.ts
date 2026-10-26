@@ -1,8 +1,9 @@
+import { RECORDED_SLEEP as DEFAULT_SLEEP, awakeRange } from './fixtures/sleep'
 import { test, expect } from '@playwright/test'
 import { Timestamp } from 'firebase/firestore'
 import type { Entry, SpacingSchedule } from '../src/types/data'
 import type { Baseline, Coverage } from '../src/types/finance'
-import { classification, comparePeriods, DEFAULT_SLEEP, eligibleInterval, monthBounds, monthGrid, performanceDays, personalBests, scoreDay, shiftMonth, summarizePerformance, validSleep } from '../src/utils/performance'
+import { classification, comparePeriods, eligibleInterval, monthBounds, monthGrid, performanceDays, personalBests, scoreDay, shiftMonth, summarizePerformance, validSleep } from '../src/utils/performance'
 import { dateKey, fromDateTimeInput } from '../src/utils/dateTime'
 import { formatCost } from '../src/utils/money'
 const schedule: SpacingSchedule = { timeZone: 'America/Toronto', steps: [{ week: 1, startsOn: '2026-01-01', minimumMinutes: 60 }, { week: 2, startsOn: '2026-10-24', minimumMinutes: 120 }] }
@@ -24,25 +25,17 @@ test('weighted scoring, no baseline reweighting and exact thresholds', () => {
   expect(scoreDay(0, 0, -1)).toBe(0)
   expect([null, 0, 49, 50, 74, 75, 89, 90, 100].map(classification)).toEqual(['Unrated', 'Significantly Below Target', 'Significantly Below Target', 'Below Target', 'Below Target', 'On Target', 'On Target', 'Excellent', 'Excellent'])
 })
-test('sleep boundaries, daytime, midnight and cross-month pairs are excluded fairly', () => {
-  const eligible = (a: string, b: string) => eligibleInterval(fromDateTimeInput(a), fromDateTimeInput(b), DEFAULT_SLEEP)
-  expect(eligible('2026-10-23T09:00', '2026-10-23T22:59')).toBe(true)
-  expect(eligible('2026-10-23T08:59', '2026-10-23T10:00')).toBe(false)
-  expect(eligible('2026-10-23T22:00', '2026-10-23T23:00')).toBe(false)
-  expect(eligible('2026-10-23T01:00', '2026-10-23T02:00')).toBe(false)
-  expect(eligible('2026-10-31T22:00', '2026-11-01T10:00')).toBe(false)
-  expect(validSleep({ start: '23:00', end: '23:00' })).toBe(false)
-  expect(validSleep({ start: '24:00', end: '09:00' })).toBe(false)
+test('recorded sleep is subtracted, unknown coverage stays ineligible, and midnight alone is not sleep', () => {
+  const a=fromDateTimeInput('2026-10-23T22:00'),b=fromDateTimeInput('2026-10-24T10:00')
+  expect(eligibleInterval(a,b,DEFAULT_SLEEP)).toBe(true)
+  expect(eligibleInterval(a,b,{schemaVersion:2,revision:0,periods:[],interruption:null})).toBe(false)
+  expect(validSleep({...DEFAULT_SLEEP,periods:[{id:'bad',kind:'sleep',startMs:b,endMs:a}]})).toBe(false)
 })
-test('DST spring and repeated fall hour use real elapsed time and both sleep occurrences', () => {
-  const a = Date.parse('2026-11-01T05:50:00Z'), b = Date.parse('2026-11-01T06:50:00Z')
-  expect(eligibleInterval(a, b, { start: '01:30', end: '01:45' })).toBe(false)
-  expect(eligibleInterval(a, b, { start: '03:00', end: '04:00' })).toBe(true)
-  const springA = Date.parse('2026-03-08T06:30:00Z'), springB = Date.parse('2026-03-08T07:30:00Z')
-  expect(eligibleInterval(springA, springB, DEFAULT_SLEEP)).toBe(false)
-  expect(eligibleInterval(springA, springB, { start: '23:00', end: '01:00' })).toBe(true)
-  const dst = performanceDays([{ ...entry('2026-03-08T01:30'), occurredAt: Timestamp.fromMillis(springA) }, { ...entry('2026-03-08T03:30'), occurredAt: Timestamp.fromMillis(springB) }], [], covered('2026-03-08'), schedule, { start: '23:00', end: '01:00' }, '2026-03-08', '2026-03-08', '2026-03-09')
-  expect(dst[0].average).toBe(60)
+test('DST timestamp intervals use real elapsed awake time', () => {
+  for(const [a,b] of [[Date.parse('2026-11-01T05:50Z'),Date.parse('2026-11-01T06:50Z')],[Date.parse('2026-03-08T06:30Z'),Date.parse('2026-03-08T07:30Z')]]) {
+    const evidence=awakeRange(a,b)
+    expect(eligibleInterval(a,b,evidence)).toBe(true)
+  }
 })
 test('confirmed, missing, insufficient and nicotine-free days never invent a score', () => {
   expect(report()[0].score).toBe(100); expect(report(entries, [])[0].score).toBeNull()

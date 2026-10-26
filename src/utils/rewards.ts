@@ -1,3 +1,5 @@
+import { sleepEvidence } from './sleep'
+import type { SleepData } from '../types/sleep'
 import { formatMinutes } from './duration'
 import { targetOn } from './spacingSchedule'
 import { ACHIEVEMENTS, DAILY_SCORE_THRESHOLD, DAILY_XP_CAP, MILESTONES, REDUCTION_DAYS } from '../config/rewards'
@@ -35,11 +37,11 @@ export function buildRewardModel(source: RewardSource, now: number) {
     const awake = { minutes: prefix.minutes + tail.minutes, reached: [...prefix.reached, ...tail.reached] }
     const awards = awake.reached.map((at, i): Award => {
       const milestone = MILESTONES[i], date = dateKey(at), startDate = dateKey(start)
-      const verified = dateRange(startDate, date).every(day => confirmed.has(day))
+      const verified = dateRange(startDate, date).every(day => confirmed.has(day)) && sleepEvidence(start,at,source.sleep).unknownMinutes < 0.000001
       const intervalMinutes = verified ? awakeProgress(start, Math.min(end, dayEnd(date) + 1), source.sleep, [], cache).minutes : milestone.ratio * target
-      return { id: `spacing_${encodeURIComponent(entry.id)}_${milestone.id}`, name: milestone.name, type: 'spacing', milestone: milestone.id, earnedAt: at, date, xp: milestone.xp, status: verified ? 'valid' : 'provisional', evidence: { startDate, endDate: date, startEntryId: entry.id, startMs: start, targetMinutes: target, awakeMinutes: milestone.ratio * target, intervalMinutes, detail: 'Awake time excludes the configured sleep window. Target is fixed at interval start. Interval duration is measured through closure or the end of this award date, whichever comes first.' } }
+      return { id: `spacing_${encodeURIComponent(entry.id)}_${milestone.id}`, name: milestone.name, type: 'spacing', milestone: milestone.id, earnedAt: at, date, xp: milestone.xp, status: verified ? 'valid' : 'provisional', evidence: { startDate, endDate: date, startEntryId: entry.id, startMs: start, targetMinutes: target, awakeMinutes: milestone.ratio * target, intervalMinutes, detail: 'Only explicitly confirmed awake time counts; recorded sleep is excluded and unknown gaps require review. Target is fixed at interval start. Interval duration is measured through closure or the end of this award date, whichever comes first.' } }
     })
-    return { awards, minutes: awake.minutes, target, start, id: entry.id }
+    return { awards, minutes: awake.minutes, unknownMinutes: sleepEvidence(start,end,source.sleep).unknownMinutes, target, start, id: entry.id }
   }
   let consistent = 0, bestConsistency = 0, priorRecord: number | null = null
   for (let i = 0; i < pouches.length - 1; i++) {
@@ -47,11 +49,11 @@ export function buildRewardModel(source: RewardSource, now: number) {
     base.push(...intervalAwards(i, end).awards)
     const verified = dateRange(dateKey(start), dateKey(end)).every(date => confirmed.has(date))
     if (!verified) { consistent = 0; continue }
-    if (!eligibleInterval(start, end, source.sleep)) continue
-    const minutes = (end - start) / 60000
+    if (!eligibleInterval(start, end, source.sleep)) { consistent = 0; continue }
+    const minutes = sleepEvidence(start,end,source.sleep).awakeMinutes
     consistent = target && minutes >= target ? consistent + 1 : 0
     bestConsistency = Math.max(bestConsistency, consistent)
-    if (consistent >= 5) unlock('getting-consistent', end, { ...emptyEvidence(dateKey(end), 'Five consecutive verified eligible daytime intervals met their start targets.'), startEntryId: pouches[i].id, startMs: start, awakeMinutes: minutes, targetMinutes: target ?? 0 })
+    if (consistent >= 5) unlock('getting-consistent', end, { ...emptyEvidence(dateKey(end), 'Five consecutive verified eligible awake-time intervals met their start targets.'), startEntryId: pouches[i].id, startMs: start, awakeMinutes: minutes, targetMinutes: target ?? 0 })
     if (priorRecord !== null && minutes > priorRecord) unlock('personal-best', end, { ...emptyEvidence(dateKey(end), `Beat the previous verified ${formatMinutes(priorRecord)} record.`), startEntryId: pouches[i].id, startMs: start, awakeMinutes: minutes })
     priorRecord = Math.max(priorRecord ?? 0, minutes)
   }
@@ -119,10 +121,16 @@ export function evaluateRewards(model: RewardModel, now: number) {
   const next = active?.target ? MILESTONES.find(item => item.ratio * active.target! > active.minutes) ?? null : null
   return { awards, achievements, active, next, streak: model.streak, progress: model.progress }
 }
-export function reconcilePlan(existing: StoredAward[], desired: Award[]) {
+export function reconcilePlan(existing: StoredAward[], desired: Award[], sleep?: SleepData) {
   const wanted = new Map(desired.map(award => [award.id, award]))
   const result = [...desired]
-  for (const award of existing) if (!wanted.has(award.id)) result.push({ ...award, status: 'invalidated' })
+  for (const award of existing) if (!wanted.has(award.id)) {
+    const sleepDependent=award.type==='spacing' || ['first-step','extra-mile','overachiever','double-time','triple-time','getting-consistent','personal-best','steady-progress','solid-week'].includes(award.id)
+    const start=award.evidence.startMs || fromDateTimeInput(`${award.evidence.startDate}T00:00`)
+    const end=Math.max(start+1,award.earnedAt)
+    const unknown=sleep && sleepDependent && sleepEvidence(start,end,sleep).unknownMinutes>0.000001
+    result.push({ ...award, status: unknown ? 'provisional' : 'invalidated' })
+  }
   return result
 }
 export function awardEqual(a: Award, b: Award) {

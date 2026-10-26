@@ -7,7 +7,8 @@ import { spacingGoal } from '../src/utils/tracking'
 import { shiftDate } from '../src/utils/financeDates'
 import { buildRewardModel, evaluateRewards, reconcilePlan, rewardTotals } from '../src/utils/rewards'
 import type { StoredAward, RewardSource } from '../src/types/rewards'
-import { DEFAULT_SLEEP, performanceDays } from '../src/utils/performance'
+import { performanceDays } from '../src/utils/performance'
+import { RECORDED_SLEEP as DEFAULT_SLEEP } from './fixtures/sleep'
 
 test('only four initial weeks; corrected Toronto transitions and no fabricated future weeks', () => {
   const schedule = correctedSchedule()

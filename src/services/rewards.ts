@@ -1,3 +1,4 @@
+import { decodeSleep } from './sleep'
 import { validateSchedule } from '../utils/spacingSchedule'
 import { collection, doc, getDocFromServer, getDocsFromServer, onSnapshot, runTransaction, Timestamp } from 'firebase/firestore'
 import { db } from '../lib/firebase'
@@ -5,7 +6,7 @@ import { rewardRevisionRef } from './rewardRevision'
 import type { Award, RewardFeed, RewardSource, StoredAward } from '../types/rewards'
 import type { Entry, SpacingSchedule } from '../types/data'
 import type { Baseline, Coverage } from '../types/finance'
-import { DEFAULT_SLEEP, validSleep } from '../utils/performance'
+import { validSleep } from '../utils/performance'
 import { awardEqual, buildRewardModel, evaluateRewards, reconcilePlan } from '../utils/rewards'
 import type { RewardModel } from '../utils/rewards'
 import { dateKey } from '../utils/dateTime'
@@ -34,7 +35,7 @@ async function loadModel(uid: string, now: number) {
   ])
   const after = await getDocFromServer(rewardRevisionRef(uid))
   if ((after.data()?.sourceRevision ?? 0) !== revision) throw new Error('Records changed during reward review. Retrying with current records.')
-  const source: RewardSource = { entries: entries.docs.map(value => ({ ...value.data(), id: value.id, pending: false } as Entry)), coverage: coverage.docs.map(value => value.data() as Coverage), baselines: baselines.docs.map(value => ({ ...value.data(), id: value.id } as Baseline)), schedule: schedule.exists() ? schedule.data() as SpacingSchedule : null, sleep: sleep.exists() ? sleep.data() as RewardSource['sleep'] : DEFAULT_SLEEP }
+  const source: RewardSource = { entries: entries.docs.map(value => ({ ...value.data(), id: value.id, pending: false } as Entry)), coverage: coverage.docs.map(value => value.data() as Coverage), baselines: baselines.docs.map(value => ({ ...value.data(), id: value.id } as Baseline)), schedule: schedule.exists() ? schedule.data() as SpacingSchedule : null, sleep: decodeSleep(sleep.data()) }
   if (source.schedule) validateSchedule(source.schedule)
   if (!validSleep(source.sleep) || !source.schedule?.steps?.length || source.schedule.steps.some(step => !Number.isFinite(step.minimumMinutes) || step.minimumMinutes <= 0)) throw new Error('Valid sleep and spacing settings are required to reconcile rewards.')
   const result = { revision, day: dateKey(now), model: buildRewardModel(source, now) }
@@ -51,7 +52,7 @@ export async function reconcileRewards(uid: string, now: number, feed: RewardFee
 async function reconcileOnce(uid: string, now: number, feed: RewardFeed) {
   if (!db) throw new Error('Firebase is not configured.')
   const { revision, model } = await loadModel(uid, now), desired = evaluateRewards(model, now)
-  const candidates = [...reconcilePlan(feed.awards, desired.awards), ...reconcilePlan(feed.achievements, desired.achievements)]
+  const candidates = [...reconcilePlan(feed.awards, desired.awards, model.source.sleep), ...reconcilePlan(feed.achievements, desired.achievements, model.source.sleep)]
   const existing = new Map([...feed.awards, ...feed.achievements].map(value => [value.id, value]))
   const changes = candidates.filter(value => !existing.has(value.id) || !awardEqual(existing.get(value.id)!, value))
   // Three records + audit events stay within the security rules' 20-document access budget.
@@ -69,7 +70,7 @@ async function reconcileOnce(uid: string, now: number, feed: RewardFeed) {
         const previous = snapshots[i].exists() ? snapshots[i].data() as StoredAward : null
         if (previous && awardEqual(previous, award)) return
         const version = (previous?.revision ?? 0) + 1, updatedAt = Timestamp.now().toMillis()
-        const reason = award.status === 'invalidated' ? 'Source records or coverage no longer support this award.' : previous?.status === 'invalidated' ? 'Supporting evidence restored.' : award.status === 'provisional' ? 'Awaiting complete day coverage.' : 'Verified against current source records.'
+        const reason = award.status === 'invalidated' ? 'Source records or coverage no longer support this award.' : previous?.status === 'invalidated' ? 'Supporting evidence restored.' : award.status === 'provisional' ? 'Awaiting confirmed usage and sleep/awake coverage.' : 'Verified against current source records.'
         const record: StoredAward = { ...cleanAward(award), revision: version, firstRecordedAt: previous?.firstRecordedAt ?? updatedAt, updatedAt, reason }
         transaction.set(refs[i], record)
         transaction.set(doc(refs[i], 'history', String(version)), { version, sourceRevision: revision, previousStatus: previous?.status ?? 'none', status: award.status, previousXp: previous?.xp ?? 0, xp: award.xp, at: updatedAt, reason, evidence: award.evidence })

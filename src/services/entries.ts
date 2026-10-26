@@ -1,3 +1,5 @@
+import { sleepRef, decodeSleep, writeSleep } from './sleep'
+import { interruptSleep } from '../utils/sleep'
 import { doc, runTransaction, serverTimestamp, Timestamp, writeBatch } from 'firebase/firestore'
 import type { Entry, ProductKind } from '../types/data'
 import { userData } from './userData'
@@ -18,16 +20,27 @@ export function createEntry(uid: string, kind: ProductKind, costCents: number | 
   // Allocate once. The Firestore SDK retries this write with this ID, never adds another document.
   if (!db) throw new Error('Firebase is not configured.')
   const occurredAt = Timestamp.now()
-  const batch = writeBatch(db)
-  batch.set(ref, {
+  const record = {
     id: ref.id, uid, kind, occurredAt, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-    costCents: kind === 'cigar' ? costCents : null, currency: 'CAD',
+    costCents: kind === 'cigar' ? costCents : null, currency: 'CAD' as const,
     priceSnapshot: kind === 'cigar' ? selectedCigar : pricing?.[kind] ?? null,
-  })
+  }
   const date = dateKey(occurredAt.toMillis())
-  batch.set(coverageRef(uid, date), unconfirmed(date))
-  touchRewards(batch, uid)
-  const completion = batch.commit()
+  let completion: Promise<void>
+  if (kind === 'pouch') {
+    completion = runTransaction(db, async tx => {
+      const snapshot=await tx.get(sleepRef(uid)), sleep=decodeSleep(snapshot.data())
+      const interrupted=interruptSleep(sleep,occurredAt.toMillis(),ref.id)
+      tx.set(ref,record)
+      tx.set(coverageRef(uid,date),unconfirmed(date))
+      if(interrupted) writeSleep(tx,uid,snapshot.data()??null,interrupted,`Sleep ended at pouch ${ref.id}. Return to sleep requires explicit confirmation.`)
+      touchRewards(tx,uid)
+    })
+  } else {
+    const batch=writeBatch(db)
+    batch.set(ref,record); batch.set(coverageRef(uid,date),unconfirmed(date)); touchRewards(batch,uid)
+    completion=batch.commit()
+  }
   return { id: ref.id, completion }
 }
 export function editEntryTime(uid: string, id: string, occurredAt: number, price?: PriceSnapshot | null) {

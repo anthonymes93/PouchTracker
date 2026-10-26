@@ -13,5 +13,5 @@ export async function isolateFirebase(page: Page, signedIn = true) {
       return { user: signedOut ? null : user, loading:false, busy:false, error:null, profileError:null, login:async()=>{}, logout:async()=>{localStorage.setItem('fixture-signed-out','true'); window.dispatchEvent(new Event('fixture-auth'));}, retryProfile:async()=>{} };
     }
   ` }))
-  for (const module of ['entries', 'preferences', 'finance', 'performance', 'rewards', 'schedule']) await page.route(`**/src/services/${module}.ts`, route => route.fulfill({ contentType: 'application/javascript', body: `export * from '/tests/fixtures/tracking.ts';` }))
+  for (const module of ['entries', 'preferences', 'finance', 'performance', 'rewards', 'schedule', 'sleep']) await page.route(`**/src/services/${module}.ts`, route => route.fulfill({ contentType: 'application/javascript', body: `export * from '/tests/fixtures/tracking.ts';` }))
 }
