@@ -8,7 +8,7 @@ import { dataErrorMessage } from '../utils/dataErrors'
 import { applyTheme, readTheme } from '../utils/themeCache'
 
 interface PreferencesState {
-  preferences: Preferences; schedule: SpacingSchedule | null; loading: boolean; saving: boolean
+  preferences: Preferences; schedule: SpacingSchedule | null; scheduleCached: boolean; loading: boolean; saving: boolean
   error: string | null; scheduleError: string | null
   setTheme: (theme: Theme) => void; rememberCigarPrice: (price: number) => void; retry: () => void
 }
@@ -18,6 +18,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const uid = user?.uid ?? null
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES)
   const [schedule, setSchedule] = useState<SpacingSchedule | null>(null)
+  const [scheduleCached, setScheduleCached] = useState(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -29,7 +30,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   owner.current = uid
   useEffect(() => {
     if (authLoading) return
-    setError(null); setScheduleError(null); setSchedule(null); setSaving(false); savingRef.current = false
+    setError(null); setScheduleError(null); setSchedule(null); setScheduleCached(true); setSaving(false); savingRef.current = false
     if (!uid) {
       applyTheme('forest', null); setPreferences(DEFAULT_PREFERENCES); current.current = DEFAULT_PREFERENCES; setLoading(false)
       return
@@ -42,7 +43,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       if (!value) return // Profile initialization creates this document; do not write defaults over a remote preference.
       current.current = value; setPreferences(value); applyTheme(value.theme, uid); setLoading(false)
     }, err => { if (active) { setError(dataErrorMessage(err)); setLoading(false) } })
-    const stopSchedule = listenSchedule(uid, value => { if (active) { setSchedule(value); setScheduleError(null) } }, err => { if (active) setScheduleError(dataErrorMessage(err)) })
+    const stopSchedule = listenSchedule(uid, (value, cached = false) => { if (active) { setScheduleCached(cached); setSchedule(value); setScheduleError(null) } }, err => { if (active) setScheduleError(dataErrorMessage(err)) })
     return () => { active = false; stopPreferences(); stopSchedule() }
   }, [uid, authLoading, attempt])
   function setTheme(theme: Theme) {
@@ -60,5 +61,5 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     if (!uid || current.current.lastCigarPriceCents === price) return
     void savePreferences(uid, { lastCigarPriceCents: price }).catch(err => { if (owner.current === uid) setError(`The preferred cigar price could not be saved. ${dataErrorMessage(err)}`) })
   }
-  return <PreferencesContext.Provider value={{ preferences, schedule, loading, saving, error, scheduleError, setTheme, rememberCigarPrice, retry: () => setAttempt(value => value + 1) }}>{children}</PreferencesContext.Provider>
+  return <PreferencesContext.Provider value={{ preferences, schedule, scheduleCached, loading, saving, error, scheduleError, setTheme, rememberCigarPrice, retry: () => setAttempt(value => value + 1) }}>{children}</PreferencesContext.Provider>
 }

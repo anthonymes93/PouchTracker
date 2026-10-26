@@ -1,4 +1,4 @@
-import { doc, onSnapshot, runTransaction, serverTimestamp } from 'firebase/firestore'
+import { doc, getDocFromServer, onSnapshot, runTransaction, serverTimestamp } from 'firebase/firestore'
 import type { Transaction } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import type { SpacingSchedule } from '../types/data'
@@ -15,13 +15,19 @@ export function writeSchedule(transaction: Transaction, uid: string, before: Spa
 }
 export async function migrateSchedule(uid: string) {
   if (!db) throw new Error('Firebase is not configured.')
-  await runTransaction(db, async transaction => {
+  try { await runTransaction(db, async transaction => {
     const snapshot = await transaction.get(reference(uid)), before = snapshot.exists() ? snapshot.data() as SpacingSchedule : null
     const after = migrationFor(before)
     if (after) writeSchedule(transaction, uid, before, after, before ? 'Schedule v2 migration: correct only the exact legacy default; preserve customized targets.' : 'Initialize corrected weekly schedule.')
-  })
+  }) } catch (error) {
+    // Some emulator/server contention paths report permission-denied before transaction retry.
+    // Accept only a confirmed peer migration; never retry or mask genuine permission failures.
+    if ((error as { code?: string }).code !== 'permission-denied') throw error
+    const saved = await getDocFromServer(reference(uid))
+    if (!saved.exists() || validateSchedule(saved.data() as SpacingSchedule).schemaVersion !== 2) throw error
+  }
 }
-export function listenSchedule(uid: string, next: (value: SpacingSchedule | null) => void, fail: (error: Error) => void) {
+export function listenSchedule(uid: string, next: (value: SpacingSchedule | null, cached?: boolean) => void, fail: (error: Error) => void) {
   let active = true, migrating = false
   const stop = onSnapshot(reference(uid), { includeMetadataChanges: true }, snapshot => {
     try {
@@ -34,7 +40,7 @@ export function listenSchedule(uid: string, next: (value: SpacingSchedule | null
         return
       }
       if (!value) { fail(new Error('Schedule unavailable offline. Connect and retry to load or initialize your saved goals.')); return }
-      next(value)
+      next(value, snapshot.metadata.fromCache)
     } catch (error) { fail(error as Error) }
   }, fail)
   return () => { active = false; stop() }
@@ -42,12 +48,18 @@ export function listenSchedule(uid: string, next: (value: SpacingSchedule | null
 export async function saveGoalChanges(uid: string, expected: SpacingSchedule, changes: GoalChange[]) {
   if (!db) throw new Error('Firebase is not configured.')
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('You are offline. Reconnect before saving goals; your draft has not been saved.')
-  await runTransaction(db, async transaction => {
+  try { await runTransaction(db, async transaction => {
     const snapshot = await transaction.get(reference(uid))
     if (!snapshot.exists()) throw new Error('The schedule is missing. Reload and retry.')
     const before = validateSchedule(snapshot.data() as SpacingSchedule)
     if (scheduleFingerprint(before) !== scheduleFingerprint(expected)) throw new Error('Goals changed on another device. Cancel this draft and review the latest saved goals before trying again.')
     const after = applyGoalChanges(before, changes, torontoToday())
     writeSchedule(transaction, uid, before, after, 'User reviewed and saved weekly target changes.')
-  })
+  }) } catch (error) {
+    if ((error as { code?: string }).code === 'permission-denied') {
+      const current = await getDocFromServer(reference(uid))
+      if (current.exists() && scheduleFingerprint(current.data() as SpacingSchedule) !== scheduleFingerprint(expected)) throw new Error('Goals changed on another device. Cancel this draft and review the latest saved goals before trying again.')
+    }
+    throw error
+  }
 }

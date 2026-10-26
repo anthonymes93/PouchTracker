@@ -5,8 +5,7 @@ import { db } from '../lib/firebase'
 import type { Preferences, ProductPrice, Progress, SpacingSchedule, UsageEntry, UserProfile, WeeklySpacingGoal } from '../types/data'
 import type { StoredAward } from '../types/rewards'
 import { DEFAULT_PREFERENCES } from '../config/defaults'
-import { migrationFor } from '../utils/spacingSchedule'
-import { writeSchedule } from './schedule'
+import { migrateSchedule } from './schedule'
 
 // These typed references are the shared contract for future features. Security is enforced by firestore.rules.
 export function userData(uid: string) {
@@ -29,11 +28,10 @@ export function userData(uid: string) {
 
 export async function ensureUserProfile(user: User) {
   if (!db) throw new Error('Firebase is not configured.')
-  const { profile: ref, preferences, schedule } = userData(user.uid)
+  const { profile: ref, preferences } = userData(user.uid)
   await runTransaction(db, async transaction => {
     const existing = await transaction.get(ref)
     const existingPreferences = await transaction.get(preferences)
-    const existingSchedule = await transaction.get(schedule)
     if (!existing.exists()) {
       transaction.set(ref, {
         displayName: user.displayName, photoURL: user.photoURL, createdAt: serverTimestamp(),
@@ -41,8 +39,6 @@ export async function ensureUserProfile(user: User) {
       })
     }
     if (!existingPreferences.exists()) transaction.set(preferences, DEFAULT_PREFERENCES)
-    const before = existingSchedule.exists() ? existingSchedule.data() : null
-    const after = migrationFor(before)
-    if (after) writeSchedule(transaction, user.uid, before, after, 'Initialize or safely migrate the weekly schedule to v2.')
   })
+  await migrateSchedule(user.uid)
 }

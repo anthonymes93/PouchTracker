@@ -84,3 +84,17 @@ test('saved legacy migration, Sunday transition while open, and pricing/entries 
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('fixture-entries')!)[0].costCents)).toBe(275)
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('fixture-pricing')!).cigarPresetsCents)).toEqual([190,230,250])
 })
+
+test('corrupted configuration shows recovery without overwriting data; sign-out discards open drafts', async ({ page }) => {
+  await page.goto('/settings/goals')
+  await expect(page.getByRole('button',{name:'Plan future weeks',exact:true})).toBeEnabled()
+  await page.evaluate(() => { localStorage.setItem('fixture-schedule', JSON.stringify({ timeZone:'America/Toronto',steps:[] })); window.dispatchEvent(new Event('fixture-update')) })
+  await expect(page.getByRole('alert').first()).toContainText('invalid')
+  await expect(page.getByRole('button',{name:'Plan future weeks',exact:true})).toBeDisabled()
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('fixture-schedule')!).steps)).toEqual([])
+  await page.evaluate(() => { localStorage.removeItem('fixture-schedule'); window.dispatchEvent(new Event('fixture-update')) })
+  await page.getByRole('button',{name:'Edit Week 2',exact:true}).click()
+  await page.evaluate(() => { localStorage.setItem('fixture-signed-out','true'); window.dispatchEvent(new Event('fixture-auth')) })
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(page.getByRole('dialog')).not.toBeVisible()
+})

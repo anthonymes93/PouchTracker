@@ -4,7 +4,7 @@ import { Check, Clock3, Leaf } from 'lucide-react'
 import { useNicotineEntries } from '../hooks/useNicotineEntries'
 import { usePouchTimer } from '../hooks/usePouchTimer'
 import { useSpacingGoal } from '../hooks/useSpacingGoal'
-import { formatDuration, spacingProgress } from '../utils/tracking'
+import { spacingProgress } from '../utils/tracking'
 import { formatCalendarDate } from '../utils/dateTime'
 import { QuickLog } from './QuickLog'
 export function PouchTimer() {
@@ -20,7 +20,7 @@ export function PouchTimer() {
       {latest.error ? <div className="error-banner" role="alert">{latest.error}<button className="text-button" onClick={retry}>Retry timer</button></div> : <p className="timer-empty"><Leaf size={16} />{latest.loading ? 'Loading your latest pouch…' : last === null ? (latest.snapshot.fromCache ? 'No pouch available locally. Connecting to your records…' : 'A fresh start. No pouches logged yet.') : latest.snapshot.fromCache ? 'Showing locally available records · syncing' : 'A little space. A little more awareness.'}</p>}
       <div className="goal-area"><div><span>{goal.current ? `Week ${goal.current.week} spacing target` : 'Spacing schedule'}</span><strong>{goal.current ? formatMinutes(goal.current.minimumMinutes) : goal.loading ? 'Loading…' : goal.next ? 'Not started' : 'Unavailable'}</strong></div>
         <div className={`progress-track ${progress?.reached ? 'complete' : ''}`} role="progressbar" aria-label="Progress toward minimum spacing target" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress?.percent ?? 0)}><span style={{ width: `${progress?.percent ?? 0}%` }} /></div>
-        <p>{goal.error || (progress ? progress.reached ? `${formatDuration(progress.beyond)} beyond your minimum spacing target.` : `${formatDuration(progress.remaining)} remaining to your minimum spacing target.` : goal.current ? 'Your spacing progress starts with your first pouch entry.' : goal.next ? `Your schedule starts ${formatCalendarDate(goal.next.startsOn)}.` : 'Waiting for your saved schedule.')}</p>
+        <p>{goal.error || (progress ? progress.reached ? `${formatMinutes(progress.beyond / 60)} beyond your minimum spacing target.` : `${formatMinutes(progress.remaining / 60)} remaining to your minimum spacing target.` : goal.current ? 'Your spacing progress starts with your first pouch entry.' : goal.next ? `Your schedule starts ${formatCalendarDate(goal.next.startsOn)}.` : 'Waiting for your saved schedule.')}</p>
         {goal.next && <p className="next-goal">Next: {formatMinutes(goal.next.minimumMinutes)} on {formatCalendarDate(goal.next.startsOn)}</p>}{goal.current && !goal.next && <p className="next-goal">This target continues until your schedule changes.</p>}<Link className="text-link manage-goals" to="/settings/goals">Manage Goals</Link><p className="spacing-note">A minimum interval, never a reminder to use nicotine.</p>
       </div>
     </section></>

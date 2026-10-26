@@ -35,6 +35,7 @@ test('duration formatter covers decimal halves and mixed hours without changing 
 })
 test('migration corrects exact legacy values once, preserves custom targets and rejects corruption', () => {
   expect(migrationFor(LEGACY_SCHEDULE)).toEqual(correctedSchedule())
+  expect(migrationFor({ timeZone: LEGACY_SCHEDULE.timeZone, steps: LEGACY_SCHEDULE.steps.map(step => ({ minimumMinutes: step.minimumMinutes, startsOn: step.startsOn, week: step.week })) })).toEqual(correctedSchedule())
   expect(migrationFor(null)).toEqual(correctedSchedule())
   expect(migrationFor(correctedSchedule())).toBeNull()
   const custom = structuredClone(LEGACY_SCHEDULE); custom.steps[1].minimumMinutes = 105

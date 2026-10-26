@@ -18,12 +18,13 @@ export function validateSchedule(value: SpacingSchedule): SpacingSchedule {
 }
 export function orderedSteps(schedule: SpacingSchedule) { return [...schedule.steps].sort((a, b) => a.startsOn.localeCompare(b.startsOn)) }
 export function targetOn(schedule: SpacingSchedule | null, date: string) { return schedule ? orderedSteps(schedule).filter(step => step.startsOn <= date).at(-1) ?? null : null }
-export function scheduleFingerprint(schedule: SpacingSchedule) { return JSON.stringify([schedule.timeZone, schedule.revision ?? 0, orderedSteps(schedule)]) }
+function stepValues(schedule: SpacingSchedule) { return orderedSteps(schedule).map(step => [step.week, step.startsOn, step.minimumMinutes]) }
+export function scheduleFingerprint(schedule: SpacingSchedule) { return JSON.stringify([schedule.timeZone, schedule.revision ?? 0, stepValues(schedule)]) }
 export function migrationFor(schedule: SpacingSchedule | null): SpacingSchedule | null {
   if (!schedule) return correctedSchedule()
   validateSchedule(schedule)
   if (schedule.schemaVersion === 2) return null
-  const old = JSON.stringify(orderedSteps(schedule)) === JSON.stringify(LEGACY_SCHEDULE.steps)
+  const old = JSON.stringify(stepValues(schedule)) === JSON.stringify(stepValues(LEGACY_SCHEDULE))
   return old ? correctedSchedule() : { ...schedule, schemaVersion: 2, revision: 1 }
 }
 export function sunday(date: string) { return shiftDate(date, -new Date(`${date}T12:00:00Z`).getUTCDay()) }

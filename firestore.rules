@@ -58,6 +58,7 @@ service cloud.firestore {
             && request.resource.data.keys().hasOnly(['revision', 'before', 'after', 'reason', 'at'])
             && request.resource.data.revision is int && string(request.resource.data.revision) == version
             && request.resource.data.at == request.time && request.resource.data.reason is string
+            && request.resource.data.revision == request.resource.data.after.revision
             && request.resource.data.after == getAfter(/databases/$(database)/documents/users/$(uid)/settings/schedule).data
             && request.resource.data.before == (exists(/databases/$(database)/documents/users/$(uid)/settings/schedule) ? get(/databases/$(database)/documents/users/$(uid)/settings/schedule).data : null);
           allow update, delete: if false;

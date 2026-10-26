@@ -25,7 +25,7 @@ function listen(next: () => void, fail: (error: Error) => void) {
   const callback = () => {
     if (localStorage.getItem('fixture-mode') === 'loading') return
     if (localStorage.getItem('fixture-mode') === 'error') { fail(new Error('Test connection unavailable.')); return }
-    next()
+    try { next() } catch (error) { fail(error as Error) }
   }
   callbacks.add(callback); queueMicrotask(callback)
   return () => { callbacks.delete(callback) }
@@ -111,3 +111,5 @@ export async function saveGoalChanges(_uid: string, expected: SpacingSchedule, c
  const after = applyGoalChanges(before, changes)
  localStorage.setItem('fixture-schedule', JSON.stringify(after)); emit()
 }
+
+export async function migrateSchedule() { throw new Error('Profile initialization must not run in isolated UI tests.') }
