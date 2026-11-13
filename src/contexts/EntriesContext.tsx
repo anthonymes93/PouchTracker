@@ -44,7 +44,7 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   function writeQueue(queue: PendingPouch[]) { localStorage.setItem(storageKey, JSON.stringify(queue)) }
   function forget(id: string) { try { writeQueue(readQueue().filter(item => item.id !== id)) } catch { /* retry on next visit */ } }
   async function replay() {
-    if (retrying.current || !navigator.onLine || !finance.pricingReady) return
+    if (retrying.current || !navigator.onLine) return
     retrying.current = true
     try {
       for (const item of readQueue()) {
