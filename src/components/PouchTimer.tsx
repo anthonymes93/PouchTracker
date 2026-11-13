@@ -8,7 +8,7 @@ import { spacingProgress } from '../utils/tracking'
 import { formatCalendarDate } from '../utils/dateTime'
 import { QuickLog } from './QuickLog'
 export function PouchTimer() {
-  const { latest, retry } = useNicotineEntries()
+  const { latest, retry, saveStatus } = useNicotineEntries()
   const last = latest.snapshot.entries[0]?.occurredAt.toMillis() ?? null
   const { now, elapsed, parts } = usePouchTimer(latest.error ? null : last)
   const goal = useSpacingGoal(now)
@@ -17,6 +17,8 @@ export function PouchTimer() {
     <section className="timer-card panel" aria-labelledby="timer-title"><div className="timer-top"><span className="eyebrow" id="timer-title"><Clock3 size={16} /> TIME SINCE LAST POUCH</span><span className="small-muted">Spacing timer</span></div>
       <div className={`timer-digits ${parts[0].length > 3 ? 'long-timer' : ''}`} role="timer" aria-label={elapsed === null ? 'Timer not started' : `${parts[0]} hours, ${parts[1]} minutes, ${parts[2]} seconds`}><span>{parts[0]}<small>HOURS</small></span><b>:</b><span>{parts[1]}<small>MINUTES</small></span><b>:</b><span>{parts[2]}<small>SECONDS</small></span></div>
       <QuickLog />
+      {saveStatus === 'saving' && <p className="data-note" role="status">The timer updates only after the pouch is visible in your records. Saving is still in progress.</p>}
+      {latest.snapshot.fromCache && <p className="data-note" role="status">Timer may be outdated: displaying cached records while connecting.</p>}
       {latest.error ? <div className="error-banner" role="alert">{latest.error}<button className="text-button" onClick={retry}>Retry timer</button></div> : <p className="timer-empty"><Leaf size={16} />{latest.loading ? 'Loading your latest pouch…' : last === null ? (latest.snapshot.fromCache ? 'No pouch available locally. Connecting to your records…' : 'A fresh start. No pouches logged yet.') : latest.snapshot.fromCache ? 'Showing locally available records · syncing' : 'A little space. A little more awareness.'}</p>}
       <div className="goal-area"><div><span>{goal.current ? `Week ${goal.current.week} spacing target` : 'Spacing schedule'}</span><strong>{goal.current ? formatMinutes(goal.current.minimumMinutes) : goal.loading ? 'Loading…' : goal.next ? 'Not started' : 'Unavailable'}</strong></div>
         <div className={`progress-track ${progress?.reached ? 'complete' : ''}`} role="progressbar" aria-label="Progress toward minimum spacing target" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress?.percent ?? 0)}><span style={{ width: `${progress?.percent ?? 0}%` }} /></div>
