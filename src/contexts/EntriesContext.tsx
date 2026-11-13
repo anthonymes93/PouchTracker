@@ -37,16 +37,18 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const lockedUntil = useRef(0)
   const retrying = useRef(false)
+  const cancelled = useRef(new Set<string>())
   const storageKey = `pouch-unsaved:${uid}`
   type PendingPouch = { id: string; occurredAt: number; pricing: typeof finance.pricing }
   function readQueue(): PendingPouch[] { try { return JSON.parse(localStorage.getItem(storageKey) || '[]') as PendingPouch[] } catch { return [] } }
   function writeQueue(queue: PendingPouch[]) { localStorage.setItem(storageKey, JSON.stringify(queue)) }
   function forget(id: string) { try { writeQueue(readQueue().filter(item => item.id !== id)) } catch { /* retry on next visit */ } }
   async function replay() {
-    if (retrying.current || !navigator.onLine) return
+    if (retrying.current || !navigator.onLine || !finance.pricingReady) return
     retrying.current = true
     try {
       for (const item of readQueue()) {
+        if (cancelled.current.has(item.id)) continue
         try {
           const operation = createEntry(uid, 'pouch', null, item.pricing, item)
           await operation.completion
@@ -85,7 +87,7 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   }
   function log(kind: ProductKind, price?: number) {
     if (typeof navigator !== 'undefined' && !navigator.onLine) { setActionError('You are offline. Reconnect before logging.'); setSaveStatus('failed'); return false }
-    if (kind !== 'cigar' && (!finance.pricingReady || finance.error)) { setActionError('Wait for your saved pricing to load before logging. Retry the connection if needed.'); return false }
+    if (kind !== 'cigar' && !finance.pricingReady) { setActionError('Wait for your saved pricing to load before logging. Retry the connection if needed.'); return false }
     if (performance.now() < lockedUntil.current || (kind === 'pouch' && (pendingRef.current.size > 0 || readQueue().length > 0))) { if (kind === 'pouch' && readQueue().length > 0) { setActionError('An earlier pouch is still waiting to save. Reconnect and wait before logging another.'); void replay() } return false }
     lockedUntil.current = performance.now() + 1500; setCooldown(true); setActionError(null); setSaveStatus('saving')
     timers.current.push(setTimeout(() => { if (mounted.current) setCooldown(false) }, 1500))
@@ -114,6 +116,8 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   function remove(id: string, restore?: Entry) {
     if (pendingRef.current.has(`delete:${id}`)) return
     removed.current.add(id)
+    cancelled.current.add(id)
+    forget(id)
     // A transactional delete must wait for a queued create to reach the server.
     // Otherwise Undo could read an absent document and leave the eventual create behind.
     try {
