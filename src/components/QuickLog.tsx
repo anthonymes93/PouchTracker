@@ -3,8 +3,8 @@ import { Cigarette, Flame, Plus } from 'lucide-react'
 import { useNicotineEntries } from '../hooks/useNicotineEntries'
 import { CigarLogPanel } from './CigarLogPanel'
 export function QuickLog() {
-  const { log, cooldown } = useNicotineEntries()
-  return <div className="pouch-action"><button className="primary-button" disabled={cooldown} onClick={() => log('pouch')}><Plus size={20} /> Log Pouch</button></div>
+  const { log, cooldown, saveStatus } = useNicotineEntries()
+  return <div className="pouch-action"><button className="primary-button" disabled={cooldown} onClick={() => log('pouch')}><Plus size={20} /> {saveStatus === 'saving' ? 'Saving pouch…' : 'Log Pouch'}</button><span className="small-muted" role="status">{saveStatus === 'saving' ? 'Waiting for server confirmation. Keep the app open.' : saveStatus === 'saved' ? 'Last pouch saved successfully.' : saveStatus === 'failed' ? 'Last save failed. Check the error before trying again.' : ''}</span></div>
 }
 export function OtherLogging() {
   const { log, cooldown } = useNicotineEntries()
