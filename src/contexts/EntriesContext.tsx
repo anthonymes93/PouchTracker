@@ -8,13 +8,15 @@ import type { EntrySnapshot } from '../services/entries'
 import { useTheme } from '../hooks/useTheme'
 import { dailyCounts } from '../utils/tracking'
 import { dateKey } from '../utils/dateTime'
+import { doc } from 'firebase/firestore'
+import { userData } from '../services/userData'
 import { dataErrorMessage } from '../utils/dataErrors'
 
 interface Feed { snapshot: EntrySnapshot; loading: boolean; error: string | null }
 interface Toast { id: number; message: string; undoId?: string; restore?: Entry }
 interface EntriesState {
   recent: Feed; today: Feed; latest: Feed; counts: ReturnType<typeof dailyCounts>; cooldown: boolean
-  pendingIds: Set<string>; toast: Toast | null; actionError: string | null
+  pendingIds: Set<string>; toast: Toast | null; actionError: string | null; saveStatus: 'idle' | 'saving' | 'saved' | 'failed'
   log: (kind: ProductKind, price?: number) => boolean; edit: (entry: Entry, time: number, price?: PriceSnapshot | null) => boolean
   remove: (id: string, restore?: Entry) => void; undo: () => void; dismissToast: () => void; retry: () => void; clearError: () => void
 }
@@ -32,13 +34,36 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   const [pendingIds, setPendingIds] = useState(new Set<string>())
   const [toast, setToast] = useState<Toast | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const lockedUntil = useRef(0)
+  const retrying = useRef(false)
+  const cancelled = useRef(new Set<string>())
+  const storageKey = `pouch-unsaved:${uid}`
+  type PendingPouch = { id: string; occurredAt: number; pricing: typeof finance.pricing }
+  function readQueue(): PendingPouch[] { try { return JSON.parse(localStorage.getItem(storageKey) || '[]') as PendingPouch[] } catch { return [] } }
+  function writeQueue(queue: PendingPouch[]) { localStorage.setItem(storageKey, JSON.stringify(queue)) }
+  function forget(id: string) { try { writeQueue(readQueue().filter(item => item.id !== id)) } catch { /* retry on next visit */ } }
+  async function replay() {
+    if (retrying.current || !navigator.onLine) return
+    retrying.current = true
+    try {
+      for (const item of readQueue()) {
+        if (cancelled.current.has(item.id)) continue
+        try {
+          const operation = createEntry(uid, 'pouch', null, item.pricing, item)
+          await operation.completion
+          forget(item.id)
+          if (mounted.current) { setSaveStatus('saved'); setActionError(null) }
+        } catch (error) { if (mounted.current) { setSaveStatus('failed'); setActionError(`Unsaved pouch waiting to retry: ${dataErrorMessage(error)}`) }; break }
+      }
+    } finally { retrying.current = false }
+  }
   const pendingRef = useRef(new Set<string>())
   const removed = useRef(new Set<string>())
   const creates = useRef(new Map<string, Promise<void>>())
   const mounted = useRef(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; timers.current.forEach(clearTimeout) } }, [])
+  useEffect(() => { mounted.current = true; void replay(); window.addEventListener('online', replay); const onVisible = () => { if (!document.hidden) void replay() }; document.addEventListener('visibilitychange', onVisible); return () => { mounted.current = false; timers.current.forEach(clearTimeout); window.removeEventListener('online', replay); document.removeEventListener('visibilitychange', onVisible) } }, [uid])
   useEffect(() => {
     const tick = () => setDay(dateKey(Date.now(), timeZone))
     tick()
@@ -53,27 +78,31 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   }
   function observe(id: string, completion: Promise<void>, success: string, undoId?: string, restore?: Entry) {
     pendingRef.current.add(id); setPendingIds(new Set(pendingRef.current))
-    completion.then(() => { if (mounted.current && !removed.current.has(id)) notify(success, undoId, restore) }).catch(err => {
-      if (mounted.current) { setActionError(dataErrorMessage(err)); setToast(null) }
+    completion.then(() => { if (mounted.current && !removed.current.has(id)) { if (undoId) setSaveStatus('saved'); notify(success, undoId, restore) } }).catch(err => {
+      if (mounted.current) { if (undoId) setSaveStatus('failed'); setActionError(dataErrorMessage(err)); setToast(null) }
     }).finally(() => {
       pendingRef.current.delete(id)
       if (mounted.current) setPendingIds(new Set(pendingRef.current))
     })
   }
   function log(kind: ProductKind, price?: number) {
-    if (kind !== 'cigar' && (!finance.pricingReady || finance.error)) { setActionError('Wait for your saved pricing to load before logging. Retry the connection if needed.'); return false }
-    if (performance.now() < lockedUntil.current) return false
-    lockedUntil.current = performance.now() + 1500; setCooldown(true); setActionError(null)
+    if (typeof navigator !== 'undefined' && !navigator.onLine) { setActionError('You are offline. Reconnect before logging.'); setSaveStatus('failed'); return false }
+    if (kind !== 'cigar' && !finance.pricingReady) { setActionError('Wait for your saved pricing to load before logging. Retry the connection if needed.'); return false }
+    if (performance.now() < lockedUntil.current || (kind === 'pouch' && (pendingRef.current.size > 0 || readQueue().length > 0))) { if (kind === 'pouch' && readQueue().length > 0) { setActionError('An earlier pouch is still waiting to save. Reconnect and wait before logging another.'); void replay() } return false }
+    lockedUntil.current = performance.now() + 1500; setCooldown(true); setActionError(null); setSaveStatus('saving')
     timers.current.push(setTimeout(() => { if (mounted.current) setCooldown(false) }, 1500))
     try {
-      const operation = createEntry(uid, kind, price ?? null, finance.pricing)
+      const request = kind === 'pouch' ? { id: doc(userData(uid).entries).id, occurredAt: Date.now(), pricing: finance.pricing } : null
+      if (request) writeQueue([...readQueue(), request])
+      const operation = createEntry(uid, kind, price ?? null, finance.pricing, request ?? undefined)
+      if (request) void operation.completion.then(() => forget(request.id), () => { /* retain for retry */ })
       creates.current.set(operation.id, operation.completion)
       void operation.completion.then(() => creates.current.delete(operation.id), () => creates.current.delete(operation.id))
-      notify(`${kind[0].toUpperCase()}${kind.slice(1)} added · saving…`, operation.id)
+      notify(`${kind[0].toUpperCase()}${kind.slice(1)} requested · not saved yet`, operation.id)
       observe(operation.id, operation.completion, `${kind[0].toUpperCase()}${kind.slice(1)} logged`, operation.id)
       if (kind === 'cigar' && price !== undefined) rememberCigarPrice(price)
       return true
-    } catch (err) { setActionError(dataErrorMessage(err)); return false }
+    } catch (err) { setSaveStatus('failed'); setActionError(dataErrorMessage(err)); return false }
   }
   function edit(entry: Entry, time: number, price?: PriceSnapshot | null) {
     if (pendingRef.current.has(entry.id)) return false
@@ -87,6 +116,8 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   function remove(id: string, restore?: Entry) {
     if (pendingRef.current.has(`delete:${id}`)) return
     removed.current.add(id)
+    cancelled.current.add(id)
+    forget(id)
     // A transactional delete must wait for a queued create to reach the server.
     // Otherwise Undo could read an absent document and leave the eventual create behind.
     try {
@@ -104,5 +135,5 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
     setToast(null); setActionError(null)
     observe(`restore:${entry.id}`, restoreEntry(uid, entry), 'Entry restored with its original price')
   }
-  return <EntriesContext.Provider value={{ recent, today, latest, counts: dailyCounts(today.snapshot.entries, Date.now(), timeZone), cooldown, pendingIds, toast, actionError, log, edit, remove, undo, dismissToast: () => setToast(null), retry: finance.retry, clearError: () => setActionError(null) }}>{children}</EntriesContext.Provider>
+  return <EntriesContext.Provider value={{ recent, today, latest, counts: dailyCounts(today.snapshot.entries, Date.now(), timeZone), cooldown, pendingIds, toast, actionError, saveStatus, log, edit, remove, undo, dismissToast: () => setToast(null), retry: finance.retry, clearError: () => setActionError(null) }}>{children}</EntriesContext.Provider>
 }

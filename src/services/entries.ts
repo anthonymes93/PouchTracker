@@ -14,12 +14,13 @@ const coverageRef = (uid: string, date: string) => doc(db!, 'users', uid, 'cover
 const unconfirmed = (date: string) => ({ date, complete: false, updatedAt: serverTimestamp() })
 
 export interface EntrySnapshot { entries: Entry[]; fromCache: boolean; pending: boolean }
-export function createEntry(uid: string, kind: ProductKind, costCents: number | null = null, pricing?: Pricing) {
+export function createEntry(uid: string, kind: ProductKind, costCents: number | null = null, pricing?: Pricing, request?: { id: string; occurredAt: number }) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) throw new Error('You are offline. Reconnect before logging.')
   const selectedCigar = kind === 'cigar' ? cigarSnapshot(costCents!) : null
-  const ref = doc(userData(uid).entries)
+  const ref = request ? doc(userData(uid).entries, request.id) : doc(userData(uid).entries)
   // Allocate once. The Firestore SDK retries this write with this ID, never adds another document.
   if (!db) throw new Error('Firebase is not configured.')
-  const occurredAt = Timestamp.now()
+  const occurredAt = request ? Timestamp.fromMillis(request.occurredAt) : Timestamp.now()
   const record = {
     id: ref.id, uid, kind, occurredAt, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     costCents: kind === 'cigar' ? costCents : null, currency: 'CAD' as const,
@@ -29,6 +30,8 @@ export function createEntry(uid: string, kind: ProductKind, costCents: number | 
   let completion: Promise<void>
   if (kind === 'pouch') {
     completion = runTransaction(db, async tx => {
+      const existing = await tx.get(ref)
+      if (existing.exists()) return
       const snapshot=await tx.get(sleepRef(uid)), sleep=decodeSleep(snapshot.data())
       const interrupted=interruptSleep(sleep,occurredAt.toMillis(),ref.id)
       tx.set(ref,record)
