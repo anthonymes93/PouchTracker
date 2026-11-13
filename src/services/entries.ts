@@ -15,6 +15,7 @@ const unconfirmed = (date: string) => ({ date, complete: false, updatedAt: serve
 
 export interface EntrySnapshot { entries: Entry[]; fromCache: boolean; pending: boolean }
 export function createEntry(uid: string, kind: ProductKind, costCents: number | null = null, pricing?: Pricing) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) throw new Error('You are offline. Reconnect before logging.')
   const selectedCigar = kind === 'cigar' ? cigarSnapshot(costCents!) : null
   const ref = doc(userData(uid).entries)
   // Allocate once. The Firestore SDK retries this write with this ID, never adds another document.
