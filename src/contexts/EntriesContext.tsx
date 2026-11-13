@@ -14,7 +14,7 @@ interface Feed { snapshot: EntrySnapshot; loading: boolean; error: string | null
 interface Toast { id: number; message: string; undoId?: string; restore?: Entry }
 interface EntriesState {
   recent: Feed; today: Feed; latest: Feed; counts: ReturnType<typeof dailyCounts>; cooldown: boolean
-  pendingIds: Set<string>; toast: Toast | null; actionError: string | null
+  pendingIds: Set<string>; toast: Toast | null; actionError: string | null; saveStatus: 'idle' | 'saving' | 'saved' | 'failed'
   log: (kind: ProductKind, price?: number) => boolean; edit: (entry: Entry, time: number, price?: PriceSnapshot | null) => boolean
   remove: (id: string, restore?: Entry) => void; undo: () => void; dismissToast: () => void; retry: () => void; clearError: () => void
 }
@@ -32,6 +32,7 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   const [pendingIds, setPendingIds] = useState(new Set<string>())
   const [toast, setToast] = useState<Toast | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const lockedUntil = useRef(0)
   const pendingRef = useRef(new Set<string>())
   const removed = useRef(new Set<string>())
@@ -53,27 +54,28 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   }
   function observe(id: string, completion: Promise<void>, success: string, undoId?: string, restore?: Entry) {
     pendingRef.current.add(id); setPendingIds(new Set(pendingRef.current))
-    completion.then(() => { if (mounted.current && !removed.current.has(id)) notify(success, undoId, restore) }).catch(err => {
-      if (mounted.current) { setActionError(dataErrorMessage(err)); setToast(null) }
+    completion.then(() => { if (mounted.current && !removed.current.has(id)) { if (undoId) setSaveStatus('saved'); notify(success, undoId, restore) } }).catch(err => {
+      if (mounted.current) { if (undoId) setSaveStatus('failed'); setActionError(dataErrorMessage(err)); setToast(null) }
     }).finally(() => {
       pendingRef.current.delete(id)
       if (mounted.current) setPendingIds(new Set(pendingRef.current))
     })
   }
   function log(kind: ProductKind, price?: number) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) { setActionError('You are offline. Reconnect before logging; no pouch has been saved.'); setSaveStatus('failed'); return false }
     if (kind !== 'cigar' && (!finance.pricingReady || finance.error)) { setActionError('Wait for your saved pricing to load before logging. Retry the connection if needed.'); return false }
     if (performance.now() < lockedUntil.current) return false
-    lockedUntil.current = performance.now() + 1500; setCooldown(true); setActionError(null)
+    lockedUntil.current = performance.now() + 1500; setCooldown(true); setActionError(null); setSaveStatus('saving')
     timers.current.push(setTimeout(() => { if (mounted.current) setCooldown(false) }, 1500))
     try {
       const operation = createEntry(uid, kind, price ?? null, finance.pricing)
       creates.current.set(operation.id, operation.completion)
       void operation.completion.then(() => creates.current.delete(operation.id), () => creates.current.delete(operation.id))
-      notify(`${kind[0].toUpperCase()}${kind.slice(1)} added · saving…`, operation.id)
+      notify(`${kind[0].toUpperCase()}${kind.slice(1)} requested · not saved yet`, operation.id)
       observe(operation.id, operation.completion, `${kind[0].toUpperCase()}${kind.slice(1)} logged`, operation.id)
       if (kind === 'cigar' && price !== undefined) rememberCigarPrice(price)
       return true
-    } catch (err) { setActionError(dataErrorMessage(err)); return false }
+    } catch (err) { setSaveStatus('failed'); setActionError(dataErrorMessage(err)); return false }
   }
   function edit(entry: Entry, time: number, price?: PriceSnapshot | null) {
     if (pendingRef.current.has(entry.id)) return false
@@ -104,5 +106,5 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
     setToast(null); setActionError(null)
     observe(`restore:${entry.id}`, restoreEntry(uid, entry), 'Entry restored with its original price')
   }
-  return <EntriesContext.Provider value={{ recent, today, latest, counts: dailyCounts(today.snapshot.entries, Date.now(), timeZone), cooldown, pendingIds, toast, actionError, log, edit, remove, undo, dismissToast: () => setToast(null), retry: finance.retry, clearError: () => setActionError(null) }}>{children}</EntriesContext.Provider>
+  return <EntriesContext.Provider value={{ recent, today, latest, counts: dailyCounts(today.snapshot.entries, Date.now(), timeZone), cooldown, pendingIds, toast, actionError, saveStatus, log, edit, remove, undo, dismissToast: () => setToast(null), retry: finance.retry, clearError: () => setActionError(null) }}>{children}</EntriesContext.Provider>
 }
