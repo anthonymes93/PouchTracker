@@ -8,6 +8,8 @@ import type { EntrySnapshot } from '../services/entries'
 import { useTheme } from '../hooks/useTheme'
 import { dailyCounts } from '../utils/tracking'
 import { dateKey } from '../utils/dateTime'
+import { doc } from 'firebase/firestore'
+import { userData } from '../services/userData'
 import { dataErrorMessage } from '../utils/dataErrors'
 
 interface Feed { snapshot: EntrySnapshot; loading: boolean; error: string | null }
@@ -34,12 +36,32 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   const [actionError, setActionError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const lockedUntil = useRef(0)
+  const retrying = useRef(false)
+  const storageKey = `pouch-unsaved:${uid}`
+  type PendingPouch = { id: string; occurredAt: number; pricing: typeof finance.pricing }
+  function readQueue(): PendingPouch[] { try { return JSON.parse(localStorage.getItem(storageKey) || '[]') as PendingPouch[] } catch { return [] } }
+  function writeQueue(queue: PendingPouch[]) { localStorage.setItem(storageKey, JSON.stringify(queue)) }
+  function forget(id: string) { try { writeQueue(readQueue().filter(item => item.id !== id)) } catch { /* retry on next visit */ } }
+  async function replay() {
+    if (retrying.current || !navigator.onLine) return
+    retrying.current = true
+    try {
+      for (const item of readQueue()) {
+        try {
+          const operation = createEntry(uid, 'pouch', null, item.pricing, item)
+          await operation.completion
+          forget(item.id)
+          if (mounted.current) { setSaveStatus('saved'); setActionError(null) }
+        } catch (error) { if (mounted.current) { setSaveStatus('failed'); setActionError(`Unsaved pouch waiting to retry: ${dataErrorMessage(error)}`) }; break }
+      }
+    } finally { retrying.current = false }
+  }
   const pendingRef = useRef(new Set<string>())
   const removed = useRef(new Set<string>())
   const creates = useRef(new Map<string, Promise<void>>())
   const mounted = useRef(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; timers.current.forEach(clearTimeout) } }, [])
+  useEffect(() => { mounted.current = true; void replay(); window.addEventListener('online', replay); const onVisible = () => { if (!document.hidden) void replay() }; document.addEventListener('visibilitychange', onVisible); return () => { mounted.current = false; timers.current.forEach(clearTimeout); window.removeEventListener('online', replay); document.removeEventListener('visibilitychange', onVisible) } }, [uid])
   useEffect(() => {
     const tick = () => setDay(dateKey(Date.now(), timeZone))
     tick()
@@ -62,13 +84,16 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
     })
   }
   function log(kind: ProductKind, price?: number) {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) { setActionError('You are offline. Reconnect before logging; no pouch has been saved.'); setSaveStatus('failed'); return false }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) { setActionError('You are offline. Reconnect before logging.'); setSaveStatus('failed'); return false }
     if (kind !== 'cigar' && (!finance.pricingReady || finance.error)) { setActionError('Wait for your saved pricing to load before logging. Retry the connection if needed.'); return false }
-    if (performance.now() < lockedUntil.current) return false
+    if (performance.now() < lockedUntil.current || (kind === 'pouch' && (pendingRef.current.size > 0 || readQueue().length > 0))) { if (kind === 'pouch' && readQueue().length > 0) { setActionError('An earlier pouch is still waiting to save. Reconnect and wait before logging another.'); void replay() } return false }
     lockedUntil.current = performance.now() + 1500; setCooldown(true); setActionError(null); setSaveStatus('saving')
     timers.current.push(setTimeout(() => { if (mounted.current) setCooldown(false) }, 1500))
     try {
-      const operation = createEntry(uid, kind, price ?? null, finance.pricing)
+      const request = kind === 'pouch' ? { id: doc(userData(uid).entries).id, occurredAt: Date.now(), pricing: finance.pricing } : null
+      if (request) writeQueue([...readQueue(), request])
+      const operation = createEntry(uid, kind, price ?? null, finance.pricing, request ?? undefined)
+      if (request) void operation.completion.then(() => forget(request.id), () => { /* retain for retry */ })
       creates.current.set(operation.id, operation.completion)
       void operation.completion.then(() => creates.current.delete(operation.id), () => creates.current.delete(operation.id))
       notify(`${kind[0].toUpperCase()}${kind.slice(1)} requested · not saved yet`, operation.id)
