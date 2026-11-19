@@ -1,21 +1,19 @@
 import { createContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Entry, ProductKind } from '../types/data'
-import { createEntry, deleteEntry, editEntryTime, restoreEntry } from '../services/entries'
+import { allocateEntryId, createEntry, deleteEntry, editEntryTime, restoreEntry } from '../services/entries'
 import { useFinance } from './FinanceContext'
 import type { PriceSnapshot } from '../types/finance'
 import type { EntrySnapshot } from '../services/entries'
 import { useTheme } from '../hooks/useTheme'
 import { dailyCounts } from '../utils/tracking'
 import { dateKey } from '../utils/dateTime'
-import { doc } from 'firebase/firestore'
-import { userData } from '../services/userData'
 import { dataErrorMessage } from '../utils/dataErrors'
 
 interface Feed { snapshot: EntrySnapshot; loading: boolean; error: string | null }
 interface Toast { id: number; message: string; undoId?: string; restore?: Entry }
 interface EntriesState {
-  recent: Feed; today: Feed; latest: Feed; counts: ReturnType<typeof dailyCounts>; cooldown: boolean
+  recent: Feed; today: Feed; latest: Feed; lastPouchMs: number | null; timerSyncing: boolean; counts: ReturnType<typeof dailyCounts>; cooldown: boolean
   pendingIds: Set<string>; toast: Toast | null; actionError: string | null; saveStatus: 'idle' | 'saving' | 'saved' | 'failed'
   log: (kind: ProductKind, price?: number) => boolean; edit: (entry: Entry, time: number, price?: PriceSnapshot | null) => boolean
   remove: (id: string, restore?: Entry) => void; undo: () => void; dismissToast: () => void; retry: () => void; clearError: () => void
@@ -30,6 +28,20 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
   const recent = feed(finance.entries.slice(0, 100))
   const latest = feed(finance.entries.filter(entry => entry.kind === 'pouch').slice(0, 1))
   const today = feed(finance.entries.filter(entry => dateKey(entry.occurredAt.toMillis(), timeZone) === day))
+  // A successful transaction can resolve before the shared ledger listener catches up.
+  // Retain its exact timestamp until that entry appears in the ledger, not just until any snapshot arrives.
+  const [confirmedPouches, setConfirmedPouches] = useState<{ id: string; occurredAt: number }[]>([])
+  const unseen = confirmedPouches.filter(item => !finance.entries.some(entry => entry.id === item.id))
+  const ledgerLast = latest.snapshot.entries[0]?.occurredAt.toMillis() ?? null
+  const lastPouchMs = unseen.reduce<number | null>((last, item) => last === null ? item.occurredAt : Math.max(last, item.occurredAt), ledgerLast)
+  const timerSyncing = unseen.length > 0
+  useEffect(() => {
+    if (unseen.length !== confirmedPouches.length) setConfirmedPouches(current => current.filter(item => !finance.entries.some(entry => entry.id === item.id)))
+  }, [finance.entries, confirmedPouches, unseen.length])
+  function confirmPouch(item: { id: string; occurredAt: number }) {
+    if (!mounted.current || cancelled.current.has(item.id)) return
+    setConfirmedPouches(current => [...current.filter(value => value.id !== item.id), item])
+  }
   const [cooldown, setCooldown] = useState(false)
   const [pendingIds, setPendingIds] = useState(new Set<string>())
   const [toast, setToast] = useState<Toast | null>(null)
@@ -53,6 +65,7 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
           const operation = createEntry(uid, 'pouch', null, item.pricing, item)
           await operation.completion
           forget(item.id)
+          confirmPouch(item)
           if (mounted.current) { setSaveStatus('saved'); setActionError(null) }
         } catch (error) { if (mounted.current) { setSaveStatus('failed'); setActionError(`Unsaved pouch waiting to retry: ${dataErrorMessage(error)}`) }; break }
       }
@@ -92,10 +105,10 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
     lockedUntil.current = performance.now() + 1500; setCooldown(true); setActionError(null); setSaveStatus('saving')
     timers.current.push(setTimeout(() => { if (mounted.current) setCooldown(false) }, 1500))
     try {
-      const request = kind === 'pouch' ? { id: doc(userData(uid).entries).id, occurredAt: Date.now(), pricing: finance.pricing } : null
+      const request = kind === 'pouch' ? { id: allocateEntryId(uid), occurredAt: Date.now(), pricing: finance.pricing } : null
       if (request) writeQueue([...readQueue(), request])
       const operation = createEntry(uid, kind, price ?? null, finance.pricing, request ?? undefined)
-      if (request) void operation.completion.then(() => forget(request.id), () => { /* retain for retry */ })
+      if (request) void operation.completion.then(() => { forget(request.id); confirmPouch(request) }, () => { /* retain for retry */ })
       creates.current.set(operation.id, operation.completion)
       void operation.completion.then(() => creates.current.delete(operation.id), () => creates.current.delete(operation.id))
       notify(`${kind[0].toUpperCase()}${kind.slice(1)} requested · not saved yet`, operation.id)
@@ -117,6 +130,7 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
     if (pendingRef.current.has(`delete:${id}`)) return
     removed.current.add(id)
     cancelled.current.add(id)
+    setConfirmedPouches(current => current.filter(item => item.id !== id))
     forget(id)
     // A transactional delete must wait for a queued create to reach the server.
     // Otherwise Undo could read an absent document and leave the eventual create behind.
@@ -135,5 +149,5 @@ export function EntriesProvider({ children, uid }: { children: ReactNode; uid: s
     setToast(null); setActionError(null)
     observe(`restore:${entry.id}`, restoreEntry(uid, entry), 'Entry restored with its original price')
   }
-  return <EntriesContext.Provider value={{ recent, today, latest, counts: dailyCounts(today.snapshot.entries, Date.now(), timeZone), cooldown, pendingIds, toast, actionError, saveStatus, log, edit, remove, undo, dismissToast: () => setToast(null), retry: finance.retry, clearError: () => setActionError(null) }}>{children}</EntriesContext.Provider>
+  return <EntriesContext.Provider value={{ recent, today, latest, lastPouchMs, timerSyncing, counts: dailyCounts(today.snapshot.entries, Date.now(), timeZone), cooldown, pendingIds, toast, actionError, saveStatus, log, edit, remove, undo, dismissToast: () => setToast(null), retry: finance.retry, clearError: () => setActionError(null) }}>{children}</EntriesContext.Provider>
 }

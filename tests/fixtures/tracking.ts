@@ -34,11 +34,14 @@ function listen(next: () => void, fail: (error: Error) => void) {
   return () => { callbacks.delete(callback) }
 }
 function snapshot(values: StoredEntry[]): EntrySnapshot { return { entries: values.sort((a, b) => b.time - a.time).map(entry), pending: false, fromCache: false } }
-export function createEntry(uid: string, kind: ProductKind, price: number | null, pricing?: Pricing) {
-  const id = crypto.randomUUID()
+export function allocateEntryId(_uid: string) { return crypto.randomUUID() }
+export function createEntry(uid: string, kind: ProductKind, price: number | null, pricing?: Pricing, request?: { id: string; occurredAt: number }) {
+  const id = request?.id ?? allocateEntryId(uid)
+  const occurredAt = request?.occurredAt ?? Date.now()
   if (localStorage.getItem('fixture-write-error')) return { id, completion: Promise.reject(new Error('Could not save test entry.')) }
-  if(kind==='pouch'){const changed=interruptSleep(fixtureSleep(),Date.now(),id);if(changed)localStorage.setItem('fixture-sleep',JSON.stringify(changed))}
-  store([...read(), { id, uid, kind, time: Date.now(), costCents: price, priceSnapshot: kind === 'cigar' ? { packCents: price!, quantity: 1 } : pricing?.[kind] ?? null }])
+  if(kind==='pouch'){const changed=interruptSleep(fixtureSleep(),occurredAt,id);if(changed)localStorage.setItem('fixture-sleep',JSON.stringify(changed))}
+  const entries = [...read().filter(value => value.id !== id), { id, uid, kind, time: occurredAt, costCents: price, priceSnapshot: kind === 'cigar' ? { packCents: price!, quantity: 1 } : pricing?.[kind] ?? null }]
+  store(entries)
   const completion = localStorage.getItem('fixture-delay') ? new Promise<void>(resolve => setTimeout(resolve, 3000)) : Promise.resolve()
   return { id, completion }
 }
@@ -57,7 +60,7 @@ export function savePreferences(_uid: string, values: Partial<Preferences>) {
 export function restoreEntry(_uid: string, original: Entry) { invalidate([original.occurredAt.toMillis()]); store([...read(), { ...original, time: original.occurredAt.toMillis() }]); return Promise.resolve() }
 export const EMPTY_FINANCE: FinanceData = { entries: [], pricing: EMPTY_PRICING, baselines: [], coverage: [], loading: true, fromCache: false, pending: false, pricingReady: false }
 export function listenFinance(_uid: string, next: (value: FinanceData) => void, fail: (error: Error) => void, skipEntries = false) {
-  return listen(() => next({ entries: skipEntries ? [] : snapshot(read()).entries, pricing: JSON.parse(localStorage.getItem('fixture-pricing') || JSON.stringify(EMPTY_PRICING)), baselines: JSON.parse(localStorage.getItem('fixture-baselines') || '[]').map((value: Baseline) => ({ ...value, createdAt: Timestamp.fromMillis(Date.now()) })), coverage: JSON.parse(localStorage.getItem('fixture-coverage') || '[]'), loading: false, fromCache: false, pending: false, pricingReady: true }), fail)
+  return listen(() => next({ entries: skipEntries ? [] : snapshot(localStorage.getItem('fixture-stale-ledger') === null ? read() : JSON.parse(localStorage.getItem('fixture-stale-ledger')!)).entries, pricing: JSON.parse(localStorage.getItem('fixture-pricing') || JSON.stringify(EMPTY_PRICING)), baselines: JSON.parse(localStorage.getItem('fixture-baselines') || '[]').map((value: Baseline) => ({ ...value, createdAt: Timestamp.fromMillis(Date.now()) })), coverage: JSON.parse(localStorage.getItem('fixture-coverage') || '[]'), loading: false, fromCache: false, pending: false, pricingReady: true }), fail)
 }
 export function savePricing(_uid: string, pricing: Pricing) { localStorage.setItem('fixture-pricing', JSON.stringify(pricing)); emit(); return Promise.resolve() }
 export function appendBaseline(_uid: string, value: Pick<Baseline, 'categories' | 'effectiveOn'>) {

@@ -14,6 +14,7 @@ const coverageRef = (uid: string, date: string) => doc(db!, 'users', uid, 'cover
 const unconfirmed = (date: string) => ({ date, complete: false, updatedAt: serverTimestamp() })
 
 export interface EntrySnapshot { entries: Entry[]; fromCache: boolean; pending: boolean }
+export function allocateEntryId(uid: string) { return doc(userData(uid).entries).id }
 export function createEntry(uid: string, kind: ProductKind, costCents: number | null = null, pricing?: Pricing, request?: { id: string; occurredAt: number }) {
   if (typeof navigator !== 'undefined' && !navigator.onLine) throw new Error('You are offline. Reconnect before logging.')
   const selectedCigar = kind === 'cigar' ? cigarSnapshot(costCents!) : null

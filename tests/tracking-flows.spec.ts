@@ -23,6 +23,25 @@ test('one-tap logging, double-tap suppression, cigarette timer independence, and
   expect((await stored(page)).map(entry => entry.kind)).toEqual(['pouch'])
 })
 
+test('confirmed pouch resets the timer even while the ledger is stale', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Log Pouch', exact: true }).click()
+  await expect(count(page, 'Pouches today')).toHaveText('1')
+  await page.clock.runFor(60000)
+  await page.evaluate(() => localStorage.setItem('fixture-stale-ledger', localStorage.getItem('fixture-entries')!))
+  await page.getByRole('button', { name: 'Log Pouch', exact: true }).click()
+  await expect(page.getByText('Last pouch saved successfully.')).toBeVisible()
+  expect(await stored(page)).toHaveLength(2)
+  await expect(page.getByRole('timer')).toHaveAttribute('aria-label', '00 hours, 00 minutes, 00 seconds')
+  await expect(page.getByText('Pouch saved. Waiting for your records to sync.')).toBeVisible()
+  await page.clock.runFor(5000)
+  await expect(page.getByRole('timer')).toHaveAttribute('aria-label', '00 hours, 00 minutes, 05 seconds')
+  await page.evaluate(() => { localStorage.removeItem('fixture-stale-ledger'); window.dispatchEvent(new Event('fixture-update')) })
+  await expect(count(page, 'Pouches today')).toHaveText('2')
+  await expect(page.getByText('Pouch saved. Waiting for your records to sync.')).toHaveCount(0)
+  await expect(page.getByRole('timer')).toHaveAttribute('aria-label', '00 hours, 00 minutes, 05 seconds')
+})
+
 test('cigar prices are stored per entry and last selected price is highlighted', async ({ page }) => {
   await page.goto('/')
   for (const price of ['1.90', '2.30', '2.50']) {
@@ -106,6 +125,7 @@ test('loading, read errors and failed writes are clear and recoverable', async (
   await expect(page.getByRole('alert').filter({ hasText: 'Could not save test entry.' })).toBeVisible()
   await expect(count(page, 'Pouches today')).toHaveText('0')
   expect(await stored(page)).toHaveLength(0)
+  await expect(page.getByRole('timer')).toHaveAttribute('aria-label', 'Timer not started')
 })
 
 test('Undo while a create is still pending does not restore its success notification', async ({ page }) => {
